@@ -391,6 +391,7 @@ function _roundRect(ctx, x, y, w, h, r) {
 // ─── Game state ───────────────────────────────────────────────────────────────
 
 let map, canvas, ctx, input;
+let minimapCanvas, minimapCtx;
 let gs;
 let lastTimestamp = null;
 let rafId = null;
@@ -514,6 +515,35 @@ function deliverPackage(holder) {
   setPhaseHUD();
 }
 
+
+function renderMinimap() {
+  if (!minimapCanvas || !gs) return;
+  const W = minimapCanvas.width, H = minimapCanvas.height;
+  minimapCtx.clearRect(0, 0, W, H);
+  minimapCtx.fillStyle = '#e8e4d9';
+  minimapCtx.fillRect(0, 0, W, H);
+  function proj(lng, lat) {
+    return {
+      x: (lng - BOUNDS.minLng) / (BOUNDS.maxLng - BOUNDS.minLng) * W,
+      y: (1 - (lat - BOUNDS.minLat) / (BOUNDS.maxLat - BOUNDS.minLat)) * H,
+    };
+  }
+  if (gs.delivery) {
+    const p = proj(gs.delivery.lng, gs.delivery.lat);
+    minimapCtx.beginPath(); minimapCtx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+    minimapCtx.fillStyle = '#22c55e'; minimapCtx.fill();
+  }
+  if (!gs.pkg.isHeld) {
+    const p = proj(gs.pkg.lng, gs.pkg.lat);
+    minimapCtx.beginPath(); minimapCtx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+    minimapCtx.fillStyle = '#facc15'; minimapCtx.fill();
+  }
+  for (const r of gs.racers) {
+    const p = proj(r.lng, r.lat);
+    minimapCtx.beginPath(); minimapCtx.arc(p.x, p.y, r.isPlayer ? 5 : 3, 0, Math.PI * 2);
+    minimapCtx.fillStyle = r.color; minimapCtx.fill();
+  }
+}
 // ─── Render ───────────────────────────────────────────────────────────────────
 
 function render(dt) {
@@ -521,6 +551,7 @@ function render(dt) {
   if (gs.delivery) gs.delivery.draw(ctx, map);
   if (!gs.pkg.isHeld) gs.pkg.draw(ctx, map);
   for (const r of gs.racers) r.draw(ctx, map, dt);
+  renderMinimap();
 }
 
 // ─── HUD ──────────────────────────────────────────────────────────────────────
@@ -612,6 +643,9 @@ window.addEventListener('DOMContentLoaded', () => {
   });
   canvas = document.getElementById('gameCanvas');
   ctx    = canvas.getContext('2d');
+  minimapCanvas = document.getElementById('minimap');
+  minimapCanvas.width = 200; minimapCanvas.height = 200;
+  minimapCtx = minimapCanvas.getContext('2d');
   input  = new InputHandler();
   initSettings();
   map.on('load', () => {

@@ -30,6 +30,18 @@ html, body {
   pointer-events: none;
 }
 
+#minimap {
+  position: absolute;
+  bottom: 50px;
+  left: 16px;
+  width: 5cm;
+  height: 5cm;
+  z-index: 20;
+  border: 2px solid #000;
+  border-radius: 4px;
+  pointer-events: none;
+}
+
 /* HUD */
 #hud-phase {
   position: absolute;
