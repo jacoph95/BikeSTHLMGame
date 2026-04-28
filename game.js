@@ -680,11 +680,15 @@ window.addEventListener('DOMContentLoaded', () => {
     initBounds();
     window.addEventListener('resize', () => { syncCanvasSize(); initBounds(); });
     map.on('move', initBounds);
-    startGame();
+    // Game starts when the player clicks "Start Game" on the start screen
   });
 
   // Block scroll/pinch zoom reaching the map through the pointer-events:none canvas
   document.getElementById('map').addEventListener('wheel', e => e.preventDefault(), { passive: false });
 
   document.getElementById('btn-restart').addEventListener('click', startGame);
+  document.getElementById('btn-start').addEventListener('click', () => {
+    document.getElementById('start-screen').style.display = 'none';
+    startGame();
+  });
 });
