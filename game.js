@@ -52,7 +52,7 @@ const RACER_CONFIGS = [
 // Mutable — set after map loads
 let BOUNDS = { minLng: 17.90, maxLng: 18.15, minLat: 59.27, maxLat: 59.40 };
 
-const GAME_SETTINGS = { speedMultiplier: 1, winScore: 100, playerCount: 2 };
+const GAME_SETTINGS = { playerSpeed: 1, botSpeed: 1, winScore: 100, playerCount: 2 };
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -139,7 +139,7 @@ class Racer {
   }
 
   updateAsPlayer(dt, input, useWASD = false) {
-    const s = this.speedMultiplier * GAME_SETTINGS.speedMultiplier;
+    const s = this.speedMultiplier * GAME_SETTINGS.playerSpeed;
     if (useWASD) {
       if (input.isDown('w') || input.isDown('W')) this.lat += SPEED_LAT * s * dt;
       if (input.isDown('s') || input.isDown('S')) this.lat -= SPEED_LAT * s * dt;
@@ -156,7 +156,7 @@ class Racer {
 
   updateAsBot(dt, target) {
     if (!target) return;
-    const s   = this.speedMultiplier * GAME_SETTINGS.speedMultiplier;
+    const s   = this.speedMultiplier * GAME_SETTINGS.botSpeed;
     const now = Date.now();
     const targetMoved = this.routeTarget && lngLatDist(target, this.routeTarget) > 60;
 
@@ -624,11 +624,18 @@ function initSettings() {
     document.getElementById('settings-panel').classList.remove('visible');
     startGame();
   });
-  document.querySelectorAll('#setting-speed button').forEach(btn => {
+  document.querySelectorAll('#setting-player-speed button').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('#setting-speed button').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('#setting-player-speed button').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      GAME_SETTINGS.speedMultiplier = parseFloat(btn.dataset.val);
+      GAME_SETTINGS.playerSpeed = parseFloat(btn.dataset.val);
+    });
+  });
+  document.querySelectorAll('#setting-bot-speed button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#setting-bot-speed button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      GAME_SETTINGS.botSpeed = parseFloat(btn.dataset.val);
     });
   });
   document.querySelectorAll('#setting-win button').forEach(btn => {
