@@ -51,6 +51,7 @@ const RACER_CONFIGS = [
 
 // Mutable — set after map loads
 let BOUNDS = { minLng: 17.90, maxLng: 18.15, minLat: 59.27, maxLat: 59.40 };
+let roadLayerIds = [];
 
 const GAME_SETTINGS = { speedMultiplier: 1, winScore: 100 };
 
@@ -69,6 +70,55 @@ function randomLocation(excludePos) {
     if (f.length) pool = f;
   }
   return { ...pool[Math.floor(Math.random() * pool.length)] };
+}
+
+// ─── Road snapping (generous channel — same rules for everyone) ───────────────
+
+function initRoadLayers() {
+  roadLayerIds = map.getStyle().layers
+    .filter(l => l.type === 'line' && /road|bridge|tunnel/.test(l.id) && !l.id.includes('case'))
+    .map(l => l.id);
+}
+
+function _nearestOnSegment(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  const t = lenSq > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq)) : 0;
+  const nx = a.x + t * dx, ny = a.y + t * dy;
+  return { x: nx, y: ny, dist: Math.sqrt((p.x - nx) ** 2 + (p.y - ny) ** 2) };
+}
+
+// CHANNEL_HALF_WIDTH: how far off the road centre a racer can be before being nudged back.
+// 40px at zoom 14 ≈ 30 m — wide enough to never feel stuck.
+const CHANNEL_HALF_WIDTH = 40;
+const ROAD_QUERY_BUFFER  = 120;
+
+function snapToRoad(lng, lat) {
+  if (!roadLayerIds.length) return { lng, lat };
+  const pt = map.project([lng, lat]);
+  const features = map.queryRenderedFeatures(
+    [[pt.x - ROAD_QUERY_BUFFER, pt.y - ROAD_QUERY_BUFFER],
+     [pt.x + ROAD_QUERY_BUFFER, pt.y + ROAD_QUERY_BUFFER]],
+    { layers: roadLayerIds }
+  );
+  if (!features.length) return { lng, lat }; // parks / water — free movement
+
+  let bestDist = Infinity, bestPt = null;
+  for (const feat of features) {
+    const coords = feat.geometry.coordinates;
+    for (let i = 0; i < coords.length - 1; i++) {
+      const p = _nearestOnSegment(pt, map.project(coords[i]), map.project(coords[i + 1]));
+      if (p.dist < bestDist) { bestDist = p.dist; bestPt = p; }
+    }
+  }
+  if (!bestPt || bestDist <= CHANNEL_HALF_WIDTH) return { lng, lat }; // already inside channel
+
+  // Push the racer back to the channel edge (not all the way to the centreline)
+  const ratio = CHANNEL_HALF_WIDTH / bestDist;
+  const sx = bestPt.x + (pt.x - bestPt.x) * ratio;
+  const sy = bestPt.y + (pt.y - bestPt.y) * ratio;
+  const sl = map.unproject([sx, sy]);
+  return { lng: sl.lng, lat: sl.lat };
 }
 
 // ─── InputHandler ─────────────────────────────────────────────────────────────
@@ -117,6 +167,8 @@ class Racer {
     if (input.isDown('ArrowDown')  || input.isDown('s') || input.isDown('S')) this.lat -= SPEED_LAT * s * dt;
     if (input.isDown('ArrowLeft')  || input.isDown('a') || input.isDown('A')) this.lng -= SPEED_LNG * s * dt;
     if (input.isDown('ArrowRight') || input.isDown('d') || input.isDown('D')) this.lng += SPEED_LNG * s * dt;
+    const snapped = snapToRoad(this.lng, this.lat);
+    this.lng = snapped.lng; this.lat = snapped.lat;
     this._clamp();
   }
 
@@ -129,6 +181,8 @@ class Racer {
       this.lng += (dx / mag) * SPEED_LNG * s * dt;
       this.lat += (dy / mag) * SPEED_LAT * s * dt;
     }
+    const snapped = snapToRoad(this.lng, this.lat);
+    this.lng = snapped.lng; this.lat = snapped.lat;
     this._clamp();
   }
 
@@ -596,6 +650,7 @@ window.addEventListener('DOMContentLoaded', () => {
     map.touchZoomRotate.disable();
     syncCanvasSize();
     initBounds();
+    initRoadLayers();
     window.addEventListener('resize', () => { syncCanvasSize(); initBounds(); });
     map.on('move', initBounds);
     startGame();
