@@ -51,7 +51,6 @@ const RACER_CONFIGS = [
 
 // Mutable — set after map loads
 let BOUNDS = { minLng: 17.90, maxLng: 18.15, minLat: 59.27, maxLat: 59.40 };
-let waterLayerIds = [];
 
 const GAME_SETTINGS = { speedMultiplier: 1, winScore: 100 };
 
@@ -70,24 +69,6 @@ function randomLocation(excludePos) {
     if (f.length) pool = f;
   }
   return { ...pool[Math.floor(Math.random() * pool.length)] };
-}
-
-// ─── Water detection ──────────────────────────────────────────────────────────
-
-function initWaterLayers() {
-  waterLayerIds = map.getStyle().layers
-    .filter(l => l.type === 'fill' && /^water/.test(l.id))
-    .map(l => l.id);
-}
-
-function isInWater(lng, lat) {
-  if (!waterLayerIds.length) return false;
-  try {
-    const pt = map.project([lng, lat]);
-    return map.queryRenderedFeatures([pt.x, pt.y], { layers: waterLayerIds }).length > 0;
-  } catch (_) {
-    return false;
-  }
 }
 
 // ─── Directions API (bots) ────────────────────────────────────────────────────
@@ -151,19 +132,16 @@ class Racer {
   }
 
   updateAsPlayer(dt, input) {
-    const prevLng = this.lng, prevLat = this.lat;
     const s = this.speedMultiplier * GAME_SETTINGS.speedMultiplier;
     if (input.isDown('ArrowUp')    || input.isDown('w') || input.isDown('W')) this.lat += SPEED_LAT * s * dt;
     if (input.isDown('ArrowDown')  || input.isDown('s') || input.isDown('S')) this.lat -= SPEED_LAT * s * dt;
     if (input.isDown('ArrowLeft')  || input.isDown('a') || input.isDown('A')) this.lng -= SPEED_LNG * s * dt;
     if (input.isDown('ArrowRight') || input.isDown('d') || input.isDown('D')) this.lng += SPEED_LNG * s * dt;
-    if (isInWater(this.lng, this.lat)) { this.lng = prevLng; this.lat = prevLat; }
     this._clamp();
   }
 
   updateAsBot(dt, target) {
     if (!target) return;
-    const prevLng = this.lng, prevLat = this.lat;
     const s   = this.speedMultiplier * GAME_SETTINGS.speedMultiplier;
     const now = Date.now();
     const targetMoved = this.routeTarget && lngLatDist(target, this.routeTarget) > 60;
@@ -199,7 +177,6 @@ class Racer {
         this.lat += (dy / mag) * SPEED_LAT * s * dt;
       }
     }
-    if (isInWater(this.lng, this.lat)) { this.lng = prevLng; this.lat = prevLat; }
     this._clamp();
   }
 
@@ -679,7 +656,6 @@ window.addEventListener('DOMContentLoaded', () => {
     map.touchZoomRotate.disable();
     syncCanvasSize();
     initBounds();
-    initWaterLayers();
     window.addEventListener('resize', () => { syncCanvasSize(); initBounds(); });
     map.on('move', initBounds);
     startGame();
