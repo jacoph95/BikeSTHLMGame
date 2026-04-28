@@ -72,46 +72,12 @@ function randomLocation(excludePos) {
   return { ...pool[Math.floor(Math.random() * pool.length)] };
 }
 
-// ─── Road snapping (player) ───────────────────────────────────────────────────
+// ─── Road layers (used by bots only — player moves freely) ───────────────────
 
 function initRoadLayers() {
   roadLayerIds = map.getStyle().layers
-    .filter(l => l.type === 'line' && /road|bridge/.test(l.id) && !l.id.includes('case'))
+    .filter(l => l.type === 'line' && /road|bridge|tunnel/.test(l.id) && !l.id.includes('case'))
     .map(l => l.id);
-}
-
-function nearestPointOnSegment(px, py, ax, ay, bx, by) {
-  const dx = bx - ax, dy = by - ay;
-  const lenSq = dx * dx + dy * dy;
-  if (lenSq < 1e-14) return [ax, ay];
-  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
-  return [ax + t * dx, ay + t * dy];
-}
-
-function snapToRoad(lng, lat) {
-  if (!roadLayerIds.length) return { lng, lat };
-  const pt = map.project([lng, lat]);
-  const B  = 65;
-  const features = map.queryRenderedFeatures(
-    [[pt.x - B, pt.y - B], [pt.x + B, pt.y + B]],
-    { layers: roadLayerIds }
-  ).slice(0, 12);
-  // No road nearby — allow free movement so player never gets stuck
-  if (!features.length) return { lng, lat };
-  let best = null, bestDist = Infinity;
-  for (const f of features) {
-    const rings = f.geometry.type === 'LineString'
-      ? [f.geometry.coordinates] : f.geometry.coordinates;
-    for (const coords of rings) {
-      for (let i = 0; i < coords.length - 1; i++) {
-        const [ax, ay] = coords[i], [bx, by] = coords[i + 1];
-        const [sx, sy] = nearestPointOnSegment(lng, lat, ax, ay, bx, by);
-        const d = Math.hypot(sx - lng, sy - lat);
-        if (d < bestDist) { bestDist = d; best = { lng: sx, lat: sy }; }
-      }
-    }
-  }
-  return best;
 }
 
 // ─── Directions API (bots) ────────────────────────────────────────────────────
@@ -176,16 +142,10 @@ class Racer {
 
   updateAsPlayer(dt, input) {
     const s = this.speedMultiplier * GAME_SETTINGS.speedMultiplier;
-    let newLng = this.lng, newLat = this.lat;
-    if (input.isDown('ArrowUp')    || input.isDown('w') || input.isDown('W')) newLat += SPEED_LAT * s * dt;
-    if (input.isDown('ArrowDown')  || input.isDown('s') || input.isDown('S')) newLat -= SPEED_LAT * s * dt;
-    if (input.isDown('ArrowLeft')  || input.isDown('a') || input.isDown('A')) newLng -= SPEED_LNG * s * dt;
-    if (input.isDown('ArrowRight') || input.isDown('d') || input.isDown('D')) newLng += SPEED_LNG * s * dt;
-    if (newLng !== this.lng || newLat !== this.lat) {
-      const snapped = snapToRoad(newLng, newLat);
-      if (snapped) { this.lng = snapped.lng; this.lat = snapped.lat; }
-      // no road in snap radius → stay put
-    }
+    if (input.isDown('ArrowUp')    || input.isDown('w') || input.isDown('W')) this.lat += SPEED_LAT * s * dt;
+    if (input.isDown('ArrowDown')  || input.isDown('s') || input.isDown('S')) this.lat -= SPEED_LAT * s * dt;
+    if (input.isDown('ArrowLeft')  || input.isDown('a') || input.isDown('A')) this.lng -= SPEED_LNG * s * dt;
+    if (input.isDown('ArrowRight') || input.isDown('d') || input.isDown('D')) this.lng += SPEED_LNG * s * dt;
     this._clamp();
   }
 
