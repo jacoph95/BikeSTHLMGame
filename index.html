@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stockholm Bike Delivery</title>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet">
+  <link href="style.css" rel="stylesheet">
+</head>
+<body>
+  <div id="container">
+    <div id="map"></div>
+    <canvas id="gameCanvas"></canvas>
+  </div>
+
+  <!-- HUD -->
+  <div id="hud-phase" class="phase-seeking">Phase 1: Race to the package!</div>
+  <div id="hud-scores"></div>
+  <div id="hud-controls">WASD / Arrow Keys to move &nbsp;·&nbsp; SPACE to steal package</div>
+  <div id="hud-announcement"></div>
+
+  <!-- Win screen -->
+  <div id="win-screen">
+    <div class="win-title">Winner!</div>
+    <div id="win-name"></div>
+    <div class="win-score-text">delivered 5 packages</div>
+    <button id="btn-restart">Play Again</button>
+  </div>
+
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
+  <script src="config.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
