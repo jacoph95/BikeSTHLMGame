@@ -107,9 +107,8 @@ html, body {
 
 #hud-announcement {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  top: 16px;
+  left: 62px;
   z-index: 30;
   background: rgba(15, 23, 42, 0.92);
   color: #f8fafc;
@@ -126,8 +125,8 @@ html, body {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translate(-50%, -55%); }
-  to   { opacity: 1; transform: translate(-50%, -50%); }
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 /* Win screen */
