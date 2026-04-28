@@ -147,6 +147,7 @@ class Racer {
 
     if (this.stealFlashMs > 0) this.stealFlashMs -= dt * 1000;
 
+    const R = 20;
     const bodyColor  = this.stealFlashMs > 0 ? '#ff3333' : this.color;
     const wheelColor = '#1e293b';
     const skinColor  = '#fde68a';
