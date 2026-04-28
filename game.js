@@ -481,9 +481,9 @@ function update(dt) {
     if (gs.announcementMs <= 0) document.getElementById('hud-announcement').style.display = 'none';
   }
 
-  // Keep map centred on the player
+  // Keep map locked to player — instant, no animation so map moves with the racer
   const player = gs.racers[0];
-  map.easeTo({ center: [player.lng, player.lat], duration: 100, easing: t => t });
+  map.jumpTo({ center: [player.lng, player.lat] });
 }
 
 function botTarget(bot) {
