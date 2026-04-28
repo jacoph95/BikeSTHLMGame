@@ -91,12 +91,13 @@ function nearestPointOnSegment(px, py, ax, ay, bx, by) {
 function snapToRoad(lng, lat) {
   if (!roadLayerIds.length) return { lng, lat };
   const pt = map.project([lng, lat]);
-  const B  = 35;
+  const B  = 65;
   const features = map.queryRenderedFeatures(
     [[pt.x - B, pt.y - B], [pt.x + B, pt.y + B]],
     { layers: roadLayerIds }
   ).slice(0, 12);
-  if (!features.length) return null;
+  // No road nearby — allow free movement so player never gets stuck
+  if (!features.length) return { lng, lat };
   let best = null, bestDist = Infinity;
   for (const f of features) {
     const rings = f.geometry.type === 'LineString'
