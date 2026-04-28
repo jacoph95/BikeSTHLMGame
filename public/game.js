@@ -55,6 +55,13 @@ let roadLayerIds = [];
 
 const GAME_SETTINGS = { speedMultiplier: 1, winScore: 100 };
 
+// ─── Multiplayer state ────────────────────────────────────────────────────────
+
+let gameMode      = 'single';  // 'single' | 'multiplayer'
+let socket        = null;
+let myPlayerIndex = 0;
+let lastAnnouncementSeq = -1;
+
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
 function lngLatDist(a, b) {
@@ -449,12 +456,48 @@ function createGameState() {
 // ─── Loop ─────────────────────────────────────────────────────────────────────
 
 function startGame() {
+  gameMode = 'single';
+  myPlayerIndex = 0;
   if (rafId) cancelAnimationFrame(rafId);
   lastTimestamp = null;
   document.getElementById('win-screen').style.display = 'none';
   gs = createGameState();
   updateScoreHUD();
   setPhaseHUD();
+  showScreen('game');
+  rafId = requestAnimationFrame(loop);
+}
+
+function startMultiplayerGame(racerConfigs, yourIndex) {
+  gameMode = 'multiplayer';
+  myPlayerIndex = yourIndex;
+  if (rafId) cancelAnimationFrame(rafId);
+  lastTimestamp = null;
+  lastAnnouncementSeq = -1;
+  document.getElementById('win-screen').style.display = 'none';
+
+  const spawns = [
+    STOCKHOLM_LOCATIONS.find(l => l.name === 'Sergels Torg'),
+    STOCKHOLM_LOCATIONS.find(l => l.name === 'Gamla Stan'),
+    STOCKHOLM_LOCATIONS.find(l => l.name === 'Medborgarplatsen'),
+    STOCKHOLM_LOCATIONS.find(l => l.name === 'Stureplan'),
+    STOCKHOLM_LOCATIONS.find(l => l.name === 'Slussen'),
+  ];
+  const racers = racerConfigs.map((cfg, i) => {
+    const r = new Racer({ ...cfg, isPlayer: i === yourIndex, speedMultiplier: 1.0 }, spawns[i].lng, spawns[i].lat);
+    return r;
+  });
+  gs = {
+    phase: 'SEEKING',
+    racers,
+    pkg: new Package(STOCKHOLM_LOCATIONS[0]),
+    delivery: null,
+    announcementMs: 0,
+    winner: null,
+  };
+  updateScoreHUD();
+  setPhaseHUD();
+  showScreen('game');
   rafId = requestAnimationFrame(loop);
 }
 
@@ -471,6 +514,14 @@ function loop(ts) {
 // ─── Update ───────────────────────────────────────────────────────────────────
 
 function update(dt) {
+  if (gameMode === 'multiplayer') {
+    sendInputToServer();
+    if (gs.announcementMs > 0) {
+      gs.announcementMs -= dt * 1000;
+      if (gs.announcementMs <= 0) document.getElementById('hud-announcement').style.display = 'none';
+    }
+    return;
+  }
   for (const r of gs.racers) { if (r.stealCooldownMs > 0) r.stealCooldownMs -= dt * 1000; }
   gs.racers[0].updateAsPlayer(dt, input);
   for (let i = 1; i < gs.racers.length; i++) gs.racers[i].updateAsBot(dt, botTarget(gs.racers[i]));
@@ -480,6 +531,53 @@ function update(dt) {
     gs.announcementMs -= dt * 1000;
     if (gs.announcementMs <= 0) document.getElementById('hud-announcement').style.display = 'none';
   }
+}
+
+function sendInputToServer() {
+  if (!socket) return;
+  socket.emit('playerInput', {
+    up:    input.isDown('ArrowUp')    || input.isDown('w') || input.isDown('W'),
+    down:  input.isDown('ArrowDown')  || input.isDown('s') || input.isDown('S'),
+    left:  input.isDown('ArrowLeft')  || input.isDown('a') || input.isDown('A'),
+    right: input.isDown('ArrowRight') || input.isDown('d') || input.isDown('D'),
+    space: input.spaceJustPressed,
+  });
+}
+
+function applyServerState(serverGs) {
+  for (let i = 0; i < gs.racers.length && i < serverGs.racers.length; i++) {
+    const sr = serverGs.racers[i];
+    gs.racers[i].lng          = sr.lng;
+    gs.racers[i].lat          = sr.lat;
+    gs.racers[i].score        = sr.score;
+    gs.racers[i].hasPackage   = sr.hasPackage;
+    gs.racers[i].stealFlashMs = sr.stealFlashMs;
+  }
+  gs.phase = serverGs.phase;
+  if (serverGs.pkg) {
+    gs.pkg.lng    = serverGs.pkg.lng;
+    gs.pkg.lat    = serverGs.pkg.lat;
+    gs.pkg.isHeld = serverGs.pkg.isHeld;
+    if (serverGs.pkg.locName) gs.pkg.locName = serverGs.pkg.locName;
+    if (serverGs.pkg.type)    gs.pkg.type    = serverGs.pkg.type;
+  }
+  if (serverGs.delivery) {
+    if (!gs.delivery) gs.delivery = new DeliveryPoint({ lng: serverGs.delivery.lng, lat: serverGs.delivery.lat, name: serverGs.delivery.locName });
+    gs.delivery.lng     = serverGs.delivery.lng;
+    gs.delivery.lat     = serverGs.delivery.lat;
+    gs.delivery.locName = serverGs.delivery.locName;
+  } else {
+    gs.delivery = null;
+  }
+  if (serverGs.announcementSeq !== undefined && serverGs.announcementSeq !== lastAnnouncementSeq && serverGs.announcementText) {
+    lastAnnouncementSeq = serverGs.announcementSeq;
+    announce(serverGs.announcementText);
+  }
+  if (serverGs.winner) {
+    gs.winner = serverGs.winner;
+  }
+  updateScoreHUD();
+  setPhaseHUD();
 }
 
 function botTarget(bot) {
@@ -614,6 +712,85 @@ function initSettings() {
   });
 }
 
+// ─── Screen management ────────────────────────────────────────────────────────
+
+function showScreen(name) {
+  document.getElementById('screen-landing').style.display = name === 'landing' ? 'flex' : 'none';
+  document.getElementById('screen-lobby').style.display   = name === 'lobby'   ? 'flex' : 'none';
+  const inGame = name === 'game';
+  ['hud-phase', 'hud-scores', 'hud-controls', 'btn-settings'].forEach(id => {
+    document.getElementById(id).style.display = inGame ? '' : 'none';
+  });
+}
+
+// ─── Multiplayer socket ───────────────────────────────────────────────────────
+
+function initSocket() {
+  if (socket) return;
+  socket = io();
+
+  socket.on('roomCreated', ({ code, yourIndex, players }) => {
+    showLobbyRoom(code, players, true);
+  });
+
+  socket.on('roomJoined', ({ code, yourIndex, players }) => {
+    myPlayerIndex = yourIndex;
+    showLobbyRoom(code, players, false);
+  });
+
+  socket.on('joinError', (msg) => {
+    alert(msg);
+  });
+
+  socket.on('playerJoined', ({ players }) => {
+    renderLobbyPlayers(players);
+  });
+
+  socket.on('playerLeft', ({ players }) => {
+    renderLobbyPlayers(players);
+  });
+
+  socket.on('youAreHost', () => {
+    document.getElementById('btn-start-game').style.display = 'block';
+    document.getElementById('lobby-waiting-msg').style.display = 'none';
+  });
+
+  socket.on('gameStarted', ({ yourIndex, racers }) => {
+    myPlayerIndex = yourIndex;
+    startMultiplayerGame(racers, yourIndex);
+  });
+
+  socket.on('stateSync', (serverGs) => {
+    if (gameMode !== 'multiplayer' || !gs) return;
+    applyServerState(serverGs);
+  });
+}
+
+function showLobbyRoom(code, players, isHost) {
+  document.getElementById('lobby-create-section').style.display = 'none';
+  document.getElementById('lobby-join-section').style.display   = 'none';
+  document.getElementById('lobby-room-section').style.display   = 'flex';
+  document.getElementById('room-code-display').textContent = code;
+  const link = `${window.location.origin}?room=${code}`;
+  document.getElementById('invite-link-input').value = link;
+  document.getElementById('btn-start-game').style.display      = isHost ? 'block' : 'none';
+  document.getElementById('lobby-waiting-msg').style.display   = isHost ? 'none'  : 'block';
+  renderLobbyPlayers(players);
+
+  document.getElementById('btn-start-game').onclick = () => {
+    socket.emit('startGame', { code });
+  };
+}
+
+function renderLobbyPlayers(players) {
+  document.getElementById('lobby-players').innerHTML = players.map(p =>
+    `<div class="lobby-player-row">
+      <div class="lobby-player-dot" style="background:${p.color}"></div>
+      <span>${p.name}</span>
+    </div>`
+  ).join('');
+}
+
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
 function initBounds() {
@@ -639,12 +816,75 @@ window.addEventListener('DOMContentLoaded', () => {
   ctx    = canvas.getContext('2d');
   input  = new InputHandler();
   initSettings();
+
   map.on('load', () => {
     syncCanvasSize();
     initBounds();
     initRoadLayers();
     window.addEventListener('resize', () => { syncCanvasSize(); initBounds(); });
-    startGame();
+
+    const urlRoom = new URLSearchParams(window.location.search).get('room');
+    if (urlRoom) {
+      showScreen('lobby');
+      initSocket();
+      document.getElementById('lobby-create-section').style.display = 'none';
+      document.getElementById('lobby-join-section').style.display   = 'flex';
+      document.getElementById('input-join-code').value = urlRoom.toUpperCase();
+    } else {
+      showScreen('landing');
+    }
   });
-  document.getElementById('btn-restart').addEventListener('click', startGame);
+
+  // Landing screen buttons
+  document.getElementById('btn-singleplayer').addEventListener('click', startGame);
+  document.getElementById('btn-goto-multiplayer').addEventListener('click', () => {
+    showScreen('lobby');
+    initSocket();
+  });
+
+  // Lobby navigation
+  document.getElementById('btn-back-to-landing').addEventListener('click', () => showScreen('landing'));
+  document.getElementById('btn-join-with-code').addEventListener('click', () => {
+    document.getElementById('lobby-create-section').style.display = 'none';
+    document.getElementById('lobby-join-section').style.display   = 'flex';
+  });
+  document.getElementById('btn-back-to-create').addEventListener('click', () => {
+    document.getElementById('lobby-join-section').style.display   = 'none';
+    document.getElementById('lobby-create-section').style.display = 'flex';
+  });
+
+  // Create room
+  document.getElementById('btn-create-room').addEventListener('click', () => {
+    const name = document.getElementById('input-player-name').value.trim() || 'Player 1';
+    socket.emit('createRoom', { playerName: name });
+  });
+
+  // Join room
+  document.getElementById('btn-join-room').addEventListener('click', () => {
+    const code = document.getElementById('input-join-code').value.trim().toUpperCase();
+    const name = document.getElementById('input-join-name').value.trim() || 'Player 2';
+    if (!code) { alert('Enter a room code'); return; }
+    socket.emit('joinRoom', { code, playerName: name });
+  });
+
+  // Copy invite link
+  document.getElementById('btn-copy-link').addEventListener('click', () => {
+    const link = document.getElementById('invite-link-input').value;
+    navigator.clipboard.writeText(link).then(() => {
+      const btn = document.getElementById('btn-copy-link');
+      btn.textContent = 'Copied!';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+    });
+  });
+
+  // Restart — go back to landing
+  document.getElementById('btn-restart').addEventListener('click', () => {
+    document.getElementById('win-screen').style.display = 'none';
+    if (gameMode === 'multiplayer') {
+      showScreen('lobby');
+    } else {
+      startGame();
+    }
+  });
 });

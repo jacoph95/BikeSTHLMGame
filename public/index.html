@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stockholm Bike Delivery</title>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet">
+  <link href="style.css" rel="stylesheet">
+</head>
+<body>
+  <div id="container">
+    <div id="map"></div>
+    <canvas id="gameCanvas"></canvas>
+  </div>
+
+  <!-- HUD (hidden until game starts) -->
+  <div id="hud-phase" class="phase-seeking" style="display:none">Phase 1: Race to the package!</div>
+  <div id="hud-scores" style="display:none"></div>
+  <div id="hud-controls" style="display:none">WASD / Arrow Keys to move &nbsp;·&nbsp; SPACE to steal package</div>
+  <div id="hud-announcement"></div>
+
+  <!-- Settings button + panel -->
+  <button id="btn-settings" title="Settings" style="display:none">&#9881;</button>
+  <div id="settings-panel">
+    <div class="settings-title">Settings</div>
+    <div class="setting-row">
+      <div class="setting-label">Speed</div>
+      <div class="setting-options" id="setting-speed">
+        <button data-val="0.5">Slow</button>
+        <button data-val="1" class="active">Normal</button>
+        <button data-val="1.75">Fast</button>
+        <button data-val="3">Very Fast</button>
+      </div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">Win at (pts)</div>
+      <div class="setting-options" id="setting-win">
+        <button data-val="50">50</button>
+        <button data-val="100" class="active">100</button>
+        <button data-val="200">200</button>
+      </div>
+    </div>
+    <div class="settings-actions">
+      <button id="btn-newgame-settings">New Game</button>
+      <button id="btn-close-settings">Close</button>
+    </div>
+  </div>
+
+  <!-- Win screen -->
+  <div id="win-screen">
+    <div class="win-title">Winner!</div>
+    <div id="win-name"></div>
+    <div class="win-score-text">reached the target score!</div>
+    <button id="btn-restart">Play Again</button>
+  </div>
+
+  <!-- Landing screen -->
+  <div id="screen-landing" class="screen-overlay">
+    <div class="screen-card">
+      <div class="screen-title">🚲 BikeSTHLM</div>
+      <div class="screen-subtitle">Stockholm Bike Delivery Racing</div>
+      <button id="btn-singleplayer" class="btn-primary">Single Player</button>
+      <button id="btn-goto-multiplayer" class="btn-secondary">Multiplayer</button>
+    </div>
+  </div>
+
+  <!-- Lobby screen -->
+  <div id="screen-lobby" class="screen-overlay" style="display:none">
+    <div class="screen-card">
+      <div class="screen-title">Multiplayer</div>
+
+      <div id="lobby-create-section">
+        <input id="input-player-name" class="lobby-input" placeholder="Your name" maxlength="12" />
+        <button id="btn-create-room" class="btn-primary">Create Room</button>
+        <button id="btn-join-with-code" class="btn-secondary">Join with Code</button>
+      </div>
+
+      <div id="lobby-join-section" style="display:none">
+        <input id="input-join-code" class="lobby-input" placeholder="Enter room code" maxlength="6" style="text-transform:uppercase;letter-spacing:0.15em" />
+        <input id="input-join-name" class="lobby-input" placeholder="Your name" maxlength="12" />
+        <button id="btn-join-room" class="btn-primary">Join Room</button>
+        <button id="btn-back-to-create" class="btn-secondary">Back</button>
+      </div>
+
+      <div id="lobby-room-section" style="display:none">
+        <div class="lobby-code-label">Room Code</div>
+        <div id="room-code-display"></div>
+        <div class="lobby-link-row">
+          <input id="invite-link-input" class="lobby-input" readonly />
+          <button id="btn-copy-link" class="btn-copy">Copy</button>
+        </div>
+        <div class="lobby-players-label">Players in lobby</div>
+        <div id="lobby-players"></div>
+        <button id="btn-start-game" class="btn-primary" style="display:none">Start Game</button>
+        <div id="lobby-waiting-msg" class="lobby-waiting">Waiting for host to start…</div>
+      </div>
+
+      <button id="btn-back-to-landing" class="btn-link">← Back</button>
+    </div>
+  </div>
+
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="config.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
