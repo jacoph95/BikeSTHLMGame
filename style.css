@@ -1,4 +1,4 @@
-* {
+﻿* {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
@@ -30,7 +30,7 @@ html, body {
   pointer-events: none;
 }
 
-#minimap {
+#minimap-container {
   position: absolute;
   bottom: 50px;
   left: 16px;
@@ -39,6 +39,18 @@ html, body {
   z-index: 20;
   border: 2px solid #000;
   border-radius: 4px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+#minimap-map {
+  position: absolute;
+  inset: 0;
+}
+
+#minimap-canvas {
+  position: absolute;
+  inset: 0;
   pointer-events: none;
 }
 

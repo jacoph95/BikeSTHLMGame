@@ -387,7 +387,7 @@ function _roundRect(ctx, x, y, w, h, r) {
 // ─── Game state ───────────────────────────────────────────────────────────────
 
 let map, canvas, ctx, input;
-let minimapCanvas, minimapCtx;
+let minimapMap, minimapCanvas, minimapCtx, minimapReady = false;
 let gs;
 let lastTimestamp = null;
 let rafId = null;
@@ -513,16 +513,14 @@ function deliverPackage(holder) {
 
 
 function renderMinimap() {
-  if (!minimapCanvas || !gs) return;
+  if (!minimapReady || !minimapCanvas || !gs) return;
+  const player = gs.racers[0];
+  minimapMap.jumpTo({ center: [player.lng, player.lat] });
   const W = minimapCanvas.width, H = minimapCanvas.height;
   minimapCtx.clearRect(0, 0, W, H);
-  minimapCtx.fillStyle = '#e8e4d9';
-  minimapCtx.fillRect(0, 0, W, H);
   function proj(lng, lat) {
-    return {
-      x: (lng - BOUNDS.minLng) / (BOUNDS.maxLng - BOUNDS.minLng) * W,
-      y: (1 - (lat - BOUNDS.minLat) / (BOUNDS.maxLat - BOUNDS.minLat)) * H,
-    };
+    const pt = minimapMap.project([lng, lat]);
+    return { x: pt.x, y: pt.y };
   }
   if (gs.delivery) {
     const p = proj(gs.delivery.lng, gs.delivery.lat);
@@ -639,9 +637,23 @@ window.addEventListener('DOMContentLoaded', () => {
   });
   canvas = document.getElementById('gameCanvas');
   ctx    = canvas.getContext('2d');
-  minimapCanvas = document.getElementById('minimap');
-  minimapCanvas.width = 200; minimapCanvas.height = 200;
+  minimapCanvas = document.getElementById('minimap-canvas');
   minimapCtx = minimapCanvas.getContext('2d');
+  minimapMap = new mapboxgl.Map({
+    container: 'minimap-map',
+    style: 'mapbox://styles/mapbox/streets-v12',
+    center: [18.07, 59.33],
+    zoom: 12,
+    interactive: false,
+    attributionControl: false,
+  });
+  minimapMap.on('load', () => {
+    minimapMap.scrollZoom.disable();
+    const c = document.getElementById('minimap-container');
+    minimapCanvas.width = c.offsetWidth;
+    minimapCanvas.height = c.offsetHeight;
+    minimapReady = true;
+  });
   input  = new InputHandler();
   initSettings();
   map.on('load', () => {
