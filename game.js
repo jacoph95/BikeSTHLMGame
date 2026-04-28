@@ -10,7 +10,7 @@ const M_PER_DEG_LNG = 56900;
 const PICKUP_RADIUS    = 30;
 const DELIVERY_RADIUS  = 40;
 const STEAL_RADIUS     = 35;
-const STEAL_COOLDOWN_MS = 2000;
+const STEAL_COOLDOWN_MS = 3000;
 
 const ITEM_TYPES = [
   { name: 'Hot Dog',     emoji: '🌭', points: 5,  weight: 65 },
@@ -259,6 +259,16 @@ class Racer {
     ctx.lineWidth   = 1.5;
     ctx.stroke();
 
+    // Steal-cooldown shield ring
+    if (this.stealCooldownMs > 0) {
+      const progress = this.stealCooldownMs / STEAL_COOLDOWN_MS;
+      ctx.beginPath();
+      ctx.arc(x, y, 24, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+      ctx.strokeStyle = `rgba(99,220,99,${0.5 + 0.4 * progress})`;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+
     // Package indicator — yellow ring around whole figure
     if (this.hasPackage) {
       ctx.beginPath();
@@ -484,7 +494,8 @@ function updateDelivering() {
 function stealPackage(thief, victim) {
   victim.hasPackage = false; thief.hasPackage = true;
   gs.pkg.holder = thief;
-  victim.stealFlashMs = 600; victim.stealCooldownMs = STEAL_COOLDOWN_MS;
+  victim.stealFlashMs = 600;
+  thief.stealCooldownMs = STEAL_COOLDOWN_MS;
   thief.clearRoute();
   announce(`${thief.name} stole the ${gs.pkg.type.name} from ${victim.name}!`);
 }
