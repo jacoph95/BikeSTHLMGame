@@ -51,7 +51,6 @@ const RACER_CONFIGS = [
 
 // Mutable — set after map loads
 let BOUNDS = { minLng: 17.90, maxLng: 18.15, minLat: 59.27, maxLat: 59.40 };
-let roadLayerIds = [];
 let waterLayerIds = [];
 
 const GAME_SETTINGS = { speedMultiplier: 1, winScore: 100 };
@@ -73,13 +72,7 @@ function randomLocation(excludePos) {
   return { ...pool[Math.floor(Math.random() * pool.length)] };
 }
 
-// ─── Road snapping (generous channel — same rules for everyone) ───────────────
-
-function initRoadLayers() {
-  roadLayerIds = map.getStyle().layers
-    .filter(l => l.type === 'line' && /road|bridge|tunnel/.test(l.id) && !l.id.includes('case'))
-    .map(l => l.id);
-}
+// ─── Water detection ──────────────────────────────────────────────────────────
 
 function initWaterLayers() {
   waterLayerIds = map.getStyle().layers
@@ -97,56 +90,19 @@ function isInWater(lng, lat) {
   }
 }
 
-function _nearestOnSegment(p, a, b) {
-  const dx = b.x - a.x, dy = b.y - a.y;
-  const lenSq = dx * dx + dy * dy;
-  const t = lenSq > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq)) : 0;
-  const nx = a.x + t * dx, ny = a.y + t * dy;
-  return { x: nx, y: ny, dist: Math.sqrt((p.x - nx) ** 2 + (p.y - ny) ** 2) };
-}
+// ─── Directions API (bots) ────────────────────────────────────────────────────
 
-// CHANNEL_HALF_WIDTH: how far off the road centre a racer can be before being nudged back.
-// 40px at zoom 14 ≈ 30 m — wide enough to never feel stuck.
-const CHANNEL_HALF_WIDTH = 40;
-const ROAD_QUERY_BUFFER  = 120;
-
-function snapToRoad(lng, lat) {
-  if (!roadLayerIds.length) return { lng, lat };
+async function fetchRoute(fromLng, fromLat, toLng, toLat) {
   try {
-    const pt = map.project([lng, lat]);
-    const features = map.queryRenderedFeatures(
-      [[pt.x - ROAD_QUERY_BUFFER, pt.y - ROAD_QUERY_BUFFER],
-       [pt.x + ROAD_QUERY_BUFFER, pt.y + ROAD_QUERY_BUFFER]],
-      { layers: roadLayerIds }
-    );
-    if (!features.length) return { lng, lat };
-
-    // Collect all line-segment coordinate pairs, handling both LineString and MultiLineString
-    const lines = [];
-    for (const feat of features) {
-      const g = feat.geometry;
-      if (g.type === 'LineString') lines.push(g.coordinates);
-      else if (g.type === 'MultiLineString') lines.push(...g.coordinates);
-    }
-
-    let bestDist = Infinity, bestPt = null;
-    for (const coords of lines) {
-      for (let i = 0; i < coords.length - 1; i++) {
-        const p = _nearestOnSegment(pt, map.project(coords[i]), map.project(coords[i + 1]));
-        if (p.dist < bestDist) { bestDist = p.dist; bestPt = p; }
-      }
-    }
-    if (!bestPt || bestDist <= CHANNEL_HALF_WIDTH) return { lng, lat };
-
-    const ratio = CHANNEL_HALF_WIDTH / bestDist;
-    const sx = bestPt.x + (pt.x - bestPt.x) * ratio;
-    const sy = bestPt.y + (pt.y - bestPt.y) * ratio;
-    const sl = map.unproject([sx, sy]);
-    if (isNaN(sl.lng) || isNaN(sl.lat)) return { lng, lat };
-    return { lng: sl.lng, lat: sl.lat };
-  } catch (_) {
-    return { lng, lat };
-  }
+    const url = `https://api.mapbox.com/directions/v5/mapbox/cycling/` +
+      `${fromLng},${fromLat};${toLng},${toLat}` +
+      `?geometries=geojson&overview=full&access_token=${MAPBOX_TOKEN}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.routes && data.routes.length > 0) return data.routes[0].geometry.coordinates;
+  } catch (_) {}
+  return null;
 }
 
 // ─── InputHandler ─────────────────────────────────────────────────────────────
@@ -187,6 +143,11 @@ class Racer {
     this.score = 0;
     this.stealFlashMs = 0;
     this.stealCooldownMs = 0;
+    this.waypoints = null;
+    this.waypointIndex = 0;
+    this.routeTarget = null;
+    this.fetchingRoute = false;
+    this.lastFetchTime = 0;
   }
 
   updateAsPlayer(dt, input) {
@@ -196,8 +157,6 @@ class Racer {
     if (input.isDown('ArrowDown')  || input.isDown('s') || input.isDown('S')) this.lat -= SPEED_LAT * s * dt;
     if (input.isDown('ArrowLeft')  || input.isDown('a') || input.isDown('A')) this.lng -= SPEED_LNG * s * dt;
     if (input.isDown('ArrowRight') || input.isDown('d') || input.isDown('D')) this.lng += SPEED_LNG * s * dt;
-    const snapped = snapToRoad(this.lng, this.lat);
-    this.lng = snapped.lng; this.lat = snapped.lat;
     if (isInWater(this.lng, this.lat)) { this.lng = prevLng; this.lat = prevLat; }
     this._clamp();
   }
@@ -205,20 +164,46 @@ class Racer {
   updateAsBot(dt, target) {
     if (!target) return;
     const prevLng = this.lng, prevLat = this.lat;
-    const s  = this.speedMultiplier * GAME_SETTINGS.speedMultiplier;
-    const dx = target.lng - this.lng, dy = target.lat - this.lat;
-    const mag = Math.sqrt(dx * dx + dy * dy);
-    if (mag > 1e-9) {
-      this.lng += (dx / mag) * SPEED_LNG * s * dt;
-      this.lat += (dy / mag) * SPEED_LAT * s * dt;
+    const s   = this.speedMultiplier * GAME_SETTINGS.speedMultiplier;
+    const now = Date.now();
+    const targetMoved = this.routeTarget && lngLatDist(target, this.routeTarget) > 60;
+
+    if ((targetMoved || !this.waypoints) && !this.fetchingRoute && now - this.lastFetchTime > 2500) {
+      if (targetMoved) this.waypoints = null;
+      this.fetchingRoute = true;
+      this.lastFetchTime = now;
+      this.routeTarget = { lng: target.lng, lat: target.lat };
+      fetchRoute(this.lng, this.lat, target.lng, target.lat).then(coords => {
+        if (coords && coords.length > 0) { this.waypoints = coords; this.waypointIndex = 0; }
+        this.fetchingRoute = false;
+      });
     }
-    const snapped = snapToRoad(this.lng, this.lat);
-    this.lng = snapped.lng; this.lat = snapped.lat;
+
+    if (this.waypoints && this.waypointIndex < this.waypoints.length) {
+      const [wlng, wlat] = this.waypoints[this.waypointIndex];
+      if (lngLatDist(this, { lng: wlng, lat: wlat }) < 20) {
+        this.waypointIndex++;
+      } else {
+        const dx = wlng - this.lng, dy = wlat - this.lat;
+        const mag = Math.sqrt(dx * dx + dy * dy);
+        if (mag > 1e-9) {
+          this.lng += (dx / mag) * SPEED_LNG * s * dt;
+          this.lat += (dy / mag) * SPEED_LAT * s * dt;
+        }
+      }
+    } else {
+      const dx = target.lng - this.lng, dy = target.lat - this.lat;
+      const mag = Math.sqrt(dx * dx + dy * dy);
+      if (mag > 1e-9) {
+        this.lng += (dx / mag) * SPEED_LNG * s * dt;
+        this.lat += (dy / mag) * SPEED_LAT * s * dt;
+      }
+    }
     if (isInWater(this.lng, this.lat)) { this.lng = prevLng; this.lat = prevLat; }
     this._clamp();
   }
 
-  clearRoute() {}
+  clearRoute() { this.waypoints = null; this.routeTarget = null; }
 
   _clamp() {
     this.lng = Math.max(BOUNDS.minLng, Math.min(BOUNDS.maxLng, this.lng));
@@ -694,7 +679,6 @@ window.addEventListener('DOMContentLoaded', () => {
     map.touchZoomRotate.disable();
     syncCanvasSize();
     initBounds();
-    initRoadLayers();
     initWaterLayers();
     window.addEventListener('resize', () => { syncCanvasSize(); initBounds(); });
     map.on('move', initBounds);
