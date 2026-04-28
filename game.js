@@ -43,10 +43,10 @@ const STOCKHOLM_LOCATIONS = [
 
 const RACER_CONFIGS = [
   { name: 'You',   color: '#2563eb', isPlayer: true,  speedMultiplier: 1.00 },
-  { name: 'Bot A', color: '#dc2626', isPlayer: false, speedMultiplier: 0.75 },
-  { name: 'Bot B', color: '#facc15', isPlayer: false, speedMultiplier: 0.85 },
-  { name: 'Bot C', color: '#16a34a', isPlayer: false, speedMultiplier: 0.90 },
-  { name: 'Bot D', color: '#db2777', isPlayer: false, speedMultiplier: 1.05 },
+  { name: 'Peter', color: '#dc2626', isPlayer: false, speedMultiplier: 0.75 },
+  { name: 'Jakob', color: '#facc15', isPlayer: false, speedMultiplier: 0.85 },
+  { name: 'Chloé', color: '#16a34a', isPlayer: false, speedMultiplier: 0.90 },
+  { name: 'Oliver', color: '#db2777', isPlayer: false, speedMultiplier: 1.05 },
 ];
 
 // Mutable — set after map loads
