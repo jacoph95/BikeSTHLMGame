@@ -42,11 +42,11 @@ const SPAWN_ZONE = {
 };
 
 const RACER_CONFIGS = [
-  { name: 'Player', color: '#3b82f6', isPlayer: true,  speedMultiplier: 1.00 },
-  { name: 'Bot 1',  color: '#ef4444', isPlayer: false, speedMultiplier: 1.00 },
-  { name: 'Bot 2',  color: '#f97316', isPlayer: false, speedMultiplier: 1.00 },
-  { name: 'Bot 3',  color: '#a855f7', isPlayer: false, speedMultiplier: 1.00 },
-  { name: 'Bot 4',  color: '#ec4899', isPlayer: false, speedMultiplier: 1.00 },
+  { name: 'You',   color: '#2563eb', isPlayer: true,  speedMultiplier: 1.00 },
+  { name: 'Bot A', color: '#dc2626', isPlayer: false, speedMultiplier: 0.75 },
+  { name: 'Bot B', color: '#facc15', isPlayer: false, speedMultiplier: 0.85 },
+  { name: 'Bot C', color: '#16a34a', isPlayer: false, speedMultiplier: 0.90 },
+  { name: 'Bot D', color: '#db2777', isPlayer: false, speedMultiplier: 1.05 },
 ];
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -109,7 +109,6 @@ class Racer {
     this.score = 0;
     this.stealFlashMs = 0;
     this.stealCooldownMs = 0;
-    this.initial = config.isPlayer ? 'P' : config.name[4]; // '1','2','3','4'
   }
 
   updateAsPlayer(dt, input) {
@@ -145,54 +144,82 @@ class Racer {
   draw(ctx, map, dt) {
     const pt = map.project([this.lng, this.lat]);
     const x = pt.x, y = pt.y;
-    const R = 15;
 
     if (this.stealFlashMs > 0) this.stealFlashMs -= dt * 1000;
 
-    const fill = this.stealFlashMs > 0 ? '#ff3333' : this.color;
+    const bodyColor  = this.stealFlashMs > 0 ? '#ff3333' : this.color;
+    const wheelColor = '#1e293b';
+    const skinColor  = '#fde68a';
 
     ctx.save();
 
     // Drop shadow
-    ctx.shadowColor = 'rgba(0,0,0,0.35)';
-    ctx.shadowBlur  = 8;
+    ctx.shadowColor = 'rgba(0,0,0,0.4)';
+    ctx.shadowBlur  = 6;
 
-    // Body circle
+    // Rear wheel (top of top-down view)
     ctx.beginPath();
-    ctx.arc(x, y, R, 0, Math.PI * 2);
-    ctx.fillStyle   = fill;
+    ctx.arc(x, y - 10, 6, 0, Math.PI * 2);
+    ctx.fillStyle = wheelColor;
     ctx.fill();
-    ctx.shadowBlur  = 0;
-    ctx.strokeStyle = '#ffffff';
+
+    // Front wheel (bottom)
+    ctx.beginPath();
+    ctx.arc(x, y + 10, 6, 0, Math.PI * 2);
+    ctx.fillStyle = wheelColor;
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+
+    // Bike frame — line connecting wheels
+    ctx.beginPath();
+    ctx.moveTo(x, y - 10);
+    ctx.lineTo(x, y + 10);
+    ctx.strokeStyle = bodyColor;
+    ctx.lineWidth   = 4;
+    ctx.stroke();
+
+    // Handlebars — horizontal bar near front wheel
+    ctx.beginPath();
+    ctx.moveTo(x - 6, y + 6);
+    ctx.lineTo(x + 6, y + 6);
+    ctx.strokeStyle = bodyColor;
     ctx.lineWidth   = 2.5;
     ctx.stroke();
 
-    // Package indicator ring
+    // Rider body — oval torso
+    ctx.beginPath();
+    ctx.ellipse(x, y, 5, 7, 0, 0, Math.PI * 2);
+    ctx.fillStyle = bodyColor;
+    ctx.fill();
+
+    // Rider head
+    ctx.beginPath();
+    ctx.arc(x, y - 5, 4, 0, Math.PI * 2);
+    ctx.fillStyle = skinColor;
+    ctx.fill();
+    ctx.strokeStyle = bodyColor;
+    ctx.lineWidth   = 1.5;
+    ctx.stroke();
+
+    // Package indicator — yellow ring around whole figure
     if (this.hasPackage) {
       ctx.beginPath();
-      ctx.arc(x, y, R + 6, 0, Math.PI * 2);
+      ctx.arc(x, y, 20, 0, Math.PI * 2);
       ctx.strokeStyle = '#facc15';
       ctx.lineWidth   = 3;
       ctx.stroke();
     }
 
-    // Initial letter
-    ctx.fillStyle       = '#ffffff';
-    ctx.font            = `bold ${R}px Arial`;
-    ctx.textAlign       = 'center';
-    ctx.textBaseline    = 'middle';
-    ctx.fillText(this.initial, x, y);
-
     // Name label below
-    ctx.fillStyle    = 'rgba(15,23,42,0.8)';
     ctx.font         = '11px Arial';
+    ctx.textAlign    = 'center';
     ctx.textBaseline = 'top';
-    // Small background pill
     const labelW = ctx.measureText(this.name).width + 8;
-    ctx.fillStyle = 'rgba(255,255,255,0.75)';
-    ctx.fillRect(x - labelW / 2, y + R + 3, labelW, 14);
-    ctx.fillStyle    = '#1e293b';
-    ctx.fillText(this.name, x, y + R + 4);
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.fillRect(x - labelW / 2, y + 16, labelW, 14);
+    ctx.fillStyle = '#1e293b';
+    ctx.fillText(this.name, x, y + 17);
 
     // Direction arrows — only for the human player
     if (this.isPlayer && gs) {
