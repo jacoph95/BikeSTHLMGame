@@ -52,7 +52,7 @@ const RACER_CONFIGS = [
 // Mutable — set after map loads
 let BOUNDS = { minLng: 17.90, maxLng: 18.15, minLat: 59.27, maxLat: 59.40 };
 
-const GAME_SETTINGS = { speedMultiplier: 1, winScore: 100 };
+const GAME_SETTINGS = { speedMultiplier: 1, winScore: 100, playerCount: 2 };
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -409,6 +409,11 @@ function createGameState() {
     STOCKHOLM_LOCATIONS.find(l => l.name === 'Slussen'),
   ];
   const racers = RACER_CONFIGS.map((cfg, i) => new Racer(cfg, spawns[i].lng, spawns[i].lat));
+  if (GAME_SETTINGS.playerCount === 1) {
+    racers[1].name = 'Peter';
+    racers[1].isPlayer = false;
+    racers[1].speedMultiplier = 0.75;
+  }
   return {
     phase: 'SEEKING',
     racers,
@@ -446,7 +451,11 @@ function loop(ts) {
 function update(dt) {
   for (const r of gs.racers) { if (r.stealCooldownMs > 0) r.stealCooldownMs -= dt * 1000; }
   gs.racers[0].updateAsPlayer(dt, input, false);
-  gs.racers[1].updateAsPlayer(dt, input, true);
+  if (GAME_SETTINGS.playerCount >= 2) {
+    gs.racers[1].updateAsPlayer(dt, input, true);
+  } else {
+    gs.racers[1].updateAsBot(dt, botTarget(gs.racers[1]));
+  }
   for (let i = 2; i < gs.racers.length; i++) gs.racers[i].updateAsBot(dt, botTarget(gs.racers[i]));
   if (gs.pkg.isHeld && gs.pkg.holder) { gs.pkg.lng = gs.pkg.holder.lng; gs.pkg.lat = gs.pkg.holder.lat; }
   gs.phase === 'SEEKING' ? updateSeeking() : updateDelivering();
@@ -487,8 +496,9 @@ function updateDelivering() {
   if (!holder) return;
   if (lngLatDist(holder, gs.delivery) < DELIVERY_RADIUS) { deliverPackage(holder); return; }
   if (holder.stealCooldownMs > 0) return;
-  // Bot auto-steal (indices 2+)
-  for (let i = 2; i < gs.racers.length; i++) {
+  // Bot auto-steal: always indices 2+; also index 1 in 1-player mode
+  const botStart = GAME_SETTINGS.playerCount >= 2 ? 2 : 1;
+  for (let i = botStart; i < gs.racers.length; i++) {
     const bot = gs.racers[i];
     if (!bot.hasPackage && lngLatDist(bot, holder) < STEAL_RADIUS) { stealPackage(bot, holder); return; }
   }
@@ -497,10 +507,12 @@ function updateDelivering() {
   if (!p1.hasPackage && input.spaceJustPressed && lngLatDist(p1, holder) < STEAL_RADIUS) {
     stealPackage(p1, holder); return;
   }
-  // P2: F to steal
-  const p2 = gs.racers[1];
-  if (!p2.hasPackage && input.fJustPressed && lngLatDist(p2, holder) < STEAL_RADIUS) {
-    stealPackage(p2, holder);
+  // P2: F to steal (2-player mode only)
+  if (GAME_SETTINGS.playerCount >= 2) {
+    const p2 = gs.racers[1];
+    if (!p2.hasPackage && input.fJustPressed && lngLatDist(p2, holder) < STEAL_RADIUS) {
+      stealPackage(p2, holder);
+    }
   }
 }
 
@@ -687,6 +699,13 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('map').addEventListener('wheel', e => e.preventDefault(), { passive: false });
 
   document.getElementById('btn-restart').addEventListener('click', startGame);
+  document.querySelectorAll('.player-opt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.player-opt').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      GAME_SETTINGS.playerCount = parseInt(btn.dataset.val);
+    });
+  });
   document.getElementById('btn-start').addEventListener('click', () => {
     document.getElementById('start-screen').style.display = 'none';
     startGame();

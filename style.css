@@ -275,6 +275,33 @@ kbd {
   transform: scale(1.03);
 }
 
+.start-players {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.start-player-options {
+  display: flex;
+  gap: 8px;
+}
+
+.player-opt {
+  padding: 8px 28px;
+  background: rgba(255,255,255,0.08);
+  color: #cbd5e1;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.player-opt:hover { background: rgba(255,255,255,0.15); color: #f8fafc; }
+.player-opt.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+
 .start-credits {
   color: #475569;
   font-size: 13px;
