@@ -95,30 +95,41 @@ const ROAD_QUERY_BUFFER  = 120;
 
 function snapToRoad(lng, lat) {
   if (!roadLayerIds.length) return { lng, lat };
-  const pt = map.project([lng, lat]);
-  const features = map.queryRenderedFeatures(
-    [[pt.x - ROAD_QUERY_BUFFER, pt.y - ROAD_QUERY_BUFFER],
-     [pt.x + ROAD_QUERY_BUFFER, pt.y + ROAD_QUERY_BUFFER]],
-    { layers: roadLayerIds }
-  );
-  if (!features.length) return { lng, lat }; // parks / water — free movement
+  try {
+    const pt = map.project([lng, lat]);
+    const features = map.queryRenderedFeatures(
+      [[pt.x - ROAD_QUERY_BUFFER, pt.y - ROAD_QUERY_BUFFER],
+       [pt.x + ROAD_QUERY_BUFFER, pt.y + ROAD_QUERY_BUFFER]],
+      { layers: roadLayerIds }
+    );
+    if (!features.length) return { lng, lat };
 
-  let bestDist = Infinity, bestPt = null;
-  for (const feat of features) {
-    const coords = feat.geometry.coordinates;
-    for (let i = 0; i < coords.length - 1; i++) {
-      const p = _nearestOnSegment(pt, map.project(coords[i]), map.project(coords[i + 1]));
-      if (p.dist < bestDist) { bestDist = p.dist; bestPt = p; }
+    // Collect all line-segment coordinate pairs, handling both LineString and MultiLineString
+    const lines = [];
+    for (const feat of features) {
+      const g = feat.geometry;
+      if (g.type === 'LineString') lines.push(g.coordinates);
+      else if (g.type === 'MultiLineString') lines.push(...g.coordinates);
     }
-  }
-  if (!bestPt || bestDist <= CHANNEL_HALF_WIDTH) return { lng, lat }; // already inside channel
 
-  // Push the racer back to the channel edge (not all the way to the centreline)
-  const ratio = CHANNEL_HALF_WIDTH / bestDist;
-  const sx = bestPt.x + (pt.x - bestPt.x) * ratio;
-  const sy = bestPt.y + (pt.y - bestPt.y) * ratio;
-  const sl = map.unproject([sx, sy]);
-  return { lng: sl.lng, lat: sl.lat };
+    let bestDist = Infinity, bestPt = null;
+    for (const coords of lines) {
+      for (let i = 0; i < coords.length - 1; i++) {
+        const p = _nearestOnSegment(pt, map.project(coords[i]), map.project(coords[i + 1]));
+        if (p.dist < bestDist) { bestDist = p.dist; bestPt = p; }
+      }
+    }
+    if (!bestPt || bestDist <= CHANNEL_HALF_WIDTH) return { lng, lat };
+
+    const ratio = CHANNEL_HALF_WIDTH / bestDist;
+    const sx = bestPt.x + (pt.x - bestPt.x) * ratio;
+    const sy = bestPt.y + (pt.y - bestPt.y) * ratio;
+    const sl = map.unproject([sx, sy]);
+    if (isNaN(sl.lng) || isNaN(sl.lat)) return { lng, lat };
+    return { lng: sl.lng, lat: sl.lat };
+  } catch (_) {
+    return { lng, lat };
+  }
 }
 
 // ─── InputHandler ─────────────────────────────────────────────────────────────
