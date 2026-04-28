@@ -42,8 +42,8 @@ const STOCKHOLM_LOCATIONS = [
 ];
 
 const RACER_CONFIGS = [
-  { name: 'You',   color: '#2563eb', isPlayer: true,  speedMultiplier: 1.00 },
-  { name: 'Peter', color: '#dc2626', isPlayer: false, speedMultiplier: 0.75 },
+  { name: 'P1',    color: '#2563eb', isPlayer: true,  speedMultiplier: 1.00 },
+  { name: 'P2',    color: '#dc2626', isPlayer: true,  speedMultiplier: 1.00 },
   { name: 'Jakob', color: '#facc15', isPlayer: false, speedMultiplier: 0.85 },
   { name: 'Chloé', color: '#16a34a', isPlayer: false, speedMultiplier: 0.90 },
   { name: 'Oliver', color: '#db2777', isPlayer: false, speedMultiplier: 1.05 },
@@ -93,6 +93,8 @@ class InputHandler {
     this.keys = new Set();
     this.spaceJustPressed = false;
     this._spaceHeld = false;
+    this.fJustPressed = false;
+    this._fHeld = false;
     window.addEventListener('keydown', (e) => {
       this.keys.add(e.key);
       if (e.key === ' ') {
@@ -100,15 +102,20 @@ class InputHandler {
         if (!this._spaceHeld) this.spaceJustPressed = true;
         this._spaceHeld = true;
       }
+      if (e.key === 'f' || e.key === 'F') {
+        if (!this._fHeld) this.fJustPressed = true;
+        this._fHeld = true;
+      }
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) e.preventDefault();
     });
     window.addEventListener('keyup', (e) => {
       this.keys.delete(e.key);
       if (e.key === ' ') this._spaceHeld = false;
+      if (e.key === 'f' || e.key === 'F') this._fHeld = false;
     });
   }
   isDown(key) { return this.keys.has(key); }
-  clearFrame() { this.spaceJustPressed = false; }
+  clearFrame() { this.spaceJustPressed = false; this.fJustPressed = false; }
 }
 
 // ─── Racer ───────────────────────────────────────────────────────────────────
@@ -131,12 +138,19 @@ class Racer {
     this.lastFetchTime = 0;
   }
 
-  updateAsPlayer(dt, input) {
+  updateAsPlayer(dt, input, useWASD = false) {
     const s = this.speedMultiplier * GAME_SETTINGS.speedMultiplier;
-    if (input.isDown('ArrowUp')    || input.isDown('w') || input.isDown('W')) this.lat += SPEED_LAT * s * dt;
-    if (input.isDown('ArrowDown')  || input.isDown('s') || input.isDown('S')) this.lat -= SPEED_LAT * s * dt;
-    if (input.isDown('ArrowLeft')  || input.isDown('a') || input.isDown('A')) this.lng -= SPEED_LNG * s * dt;
-    if (input.isDown('ArrowRight') || input.isDown('d') || input.isDown('D')) this.lng += SPEED_LNG * s * dt;
+    if (useWASD) {
+      if (input.isDown('w') || input.isDown('W')) this.lat += SPEED_LAT * s * dt;
+      if (input.isDown('s') || input.isDown('S')) this.lat -= SPEED_LAT * s * dt;
+      if (input.isDown('a') || input.isDown('A')) this.lng -= SPEED_LNG * s * dt;
+      if (input.isDown('d') || input.isDown('D')) this.lng += SPEED_LNG * s * dt;
+    } else {
+      if (input.isDown('ArrowUp'))    this.lat += SPEED_LAT * s * dt;
+      if (input.isDown('ArrowDown'))  this.lat -= SPEED_LAT * s * dt;
+      if (input.isDown('ArrowLeft'))  this.lng -= SPEED_LNG * s * dt;
+      if (input.isDown('ArrowRight')) this.lng += SPEED_LNG * s * dt;
+    }
     this._clamp();
   }
 
@@ -431,8 +445,9 @@ function loop(ts) {
 
 function update(dt) {
   for (const r of gs.racers) { if (r.stealCooldownMs > 0) r.stealCooldownMs -= dt * 1000; }
-  gs.racers[0].updateAsPlayer(dt, input);
-  for (let i = 1; i < gs.racers.length; i++) gs.racers[i].updateAsBot(dt, botTarget(gs.racers[i]));
+  gs.racers[0].updateAsPlayer(dt, input, false);
+  gs.racers[1].updateAsPlayer(dt, input, true);
+  for (let i = 2; i < gs.racers.length; i++) gs.racers[i].updateAsBot(dt, botTarget(gs.racers[i]));
   if (gs.pkg.isHeld && gs.pkg.holder) { gs.pkg.lng = gs.pkg.holder.lng; gs.pkg.lat = gs.pkg.holder.lat; }
   gs.phase === 'SEEKING' ? updateSeeking() : updateDelivering();
   if (gs.announcementMs > 0) {
@@ -440,9 +455,9 @@ function update(dt) {
     if (gs.announcementMs <= 0) document.getElementById('hud-announcement').style.display = 'none';
   }
 
-  // Keep map centred on the player
-  const player = gs.racers[0];
-  map.easeTo({ center: [player.lng, player.lat], duration: 100, easing: t => t });
+  // Keep map centred between both human players
+  const p1 = gs.racers[0], p2 = gs.racers[1];
+  map.easeTo({ center: [(p1.lng + p2.lng) / 2, (p1.lat + p2.lat) / 2], duration: 100, easing: t => t });
 }
 
 function botTarget(bot) {
@@ -472,13 +487,20 @@ function updateDelivering() {
   if (!holder) return;
   if (lngLatDist(holder, gs.delivery) < DELIVERY_RADIUS) { deliverPackage(holder); return; }
   if (holder.stealCooldownMs > 0) return;
-  for (let i = 1; i < gs.racers.length; i++) {
+  // Bot auto-steal (indices 2+)
+  for (let i = 2; i < gs.racers.length; i++) {
     const bot = gs.racers[i];
     if (!bot.hasPackage && lngLatDist(bot, holder) < STEAL_RADIUS) { stealPackage(bot, holder); return; }
   }
-  const player = gs.racers[0];
-  if (!player.hasPackage && input.spaceJustPressed && lngLatDist(player, holder) < STEAL_RADIUS) {
-    stealPackage(player, holder);
+  // P1: Space to steal
+  const p1 = gs.racers[0];
+  if (!p1.hasPackage && input.spaceJustPressed && lngLatDist(p1, holder) < STEAL_RADIUS) {
+    stealPackage(p1, holder); return;
+  }
+  // P2: F to steal
+  const p2 = gs.racers[1];
+  if (!p2.hasPackage && input.fJustPressed && lngLatDist(p2, holder) < STEAL_RADIUS) {
+    stealPackage(p2, holder);
   }
 }
 
