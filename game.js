@@ -621,6 +621,8 @@ window.addEventListener('DOMContentLoaded', () => {
     style:     'mapbox://styles/mapbox/streets-v12',
     center:    [18.07, 59.33],
     zoom:      14,
+    minZoom:   14,
+    maxZoom:   14,
     interactive: false,
   });
 
@@ -629,10 +631,16 @@ window.addEventListener('DOMContentLoaded', () => {
   input  = new InputHandler();
 
   map.on('load', () => {
+    map.scrollZoom.disable();
+    map.doubleClickZoom.disable();
+    map.touchZoomRotate.disable();
     syncCanvasSize();
     window.addEventListener('resize', syncCanvasSize);
     startGame();
   });
+
+  // Block scroll/pinch zoom reaching the map through the pointer-events:none canvas
+  document.getElementById('map').addEventListener('wheel', e => e.preventDefault(), { passive: false });
 
   document.getElementById('btn-restart').addEventListener('click', startGame);
 });
