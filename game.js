@@ -2,15 +2,14 @@
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const SPEED_LAT    = 0.0000375; // degrees/sec ≈ 15 km/h
-const SPEED_LNG    = 0.0000733; // degrees/sec (corrected for Stockholm latitude)
+const SPEED_LNG     = 0.003;   // base deg/s east-west  (~35 px/s at zoom 14)
+const SPEED_LAT     = 0.0015;  // base deg/s north-south (visually symmetric)
 const M_PER_DEG_LAT = 111320;
-const M_PER_DEG_LNG = 56900;   // 111320 * cos(59.3° * π/180)
+const M_PER_DEG_LNG = 56900;
 
-const PICKUP_RADIUS    = 30;   // meters
-const DELIVERY_RADIUS  = 40;   // meters
-const STEAL_RADIUS     = 35;   // meters
-const WIN_SCORE        = 100;
+const PICKUP_RADIUS    = 30;
+const DELIVERY_RADIUS  = 40;
+const STEAL_RADIUS     = 35;
 const STEAL_COOLDOWN_MS = 2000;
 
 const ITEM_TYPES = [
@@ -23,31 +22,38 @@ const ITEM_TYPES = [
 function randomItemType() {
   const total = ITEM_TYPES.reduce((s, t) => s + t.weight, 0);
   let r = Math.random() * total;
-  for (const t of ITEM_TYPES) {
-    r -= t.weight;
-    if (r <= 0) return t;
-  }
+  for (const t of ITEM_TYPES) { r -= t.weight; if (r <= 0) return t; }
   return ITEM_TYPES[0];
 }
 
-const BOUNDS = {
-  minLng: 17.90, maxLng: 18.15,
-  minLat:  59.27, maxLat:  59.40,
-};
-
-// Tighter inner zone for spawning objects (avoids water edges)
-const SPAWN_ZONE = {
-  minLng: 17.97, maxLng: 18.12,
-  minLat:  59.29, maxLat:  59.37,
-};
+const STOCKHOLM_LOCATIONS = [
+  { name: 'Gamla Stan',        lng: 18.0686, lat: 59.3250 },
+  { name: 'Sergels Torg',      lng: 18.0634, lat: 59.3326 },
+  { name: 'Medborgarplatsen',  lng: 18.0742, lat: 59.3154 },
+  { name: 'Stureplan',         lng: 18.0763, lat: 59.3362 },
+  { name: 'Slussen',           lng: 18.0722, lat: 59.3189 },
+  { name: 'Stadshuset',        lng: 18.0543, lat: 59.3276 },
+  { name: 'Humlegården',       lng: 18.0793, lat: 59.3394 },
+  { name: 'Karlaplan',         lng: 18.0944, lat: 59.3386 },
+  { name: 'Folkungagatan',     lng: 18.0805, lat: 59.3143 },
+  { name: 'Östermalmstorg',    lng: 18.0775, lat: 59.3343 },
+  { name: 'Söder Mälarstrand', lng: 18.0534, lat: 59.3179 },
+  { name: 'Riddarholmen',      lng: 18.0636, lat: 59.3253 },
+];
 
 const RACER_CONFIGS = [
   { name: 'Player', color: '#3b82f6', isPlayer: true,  speedMultiplier: 1.00 },
-  { name: 'Bot 1',  color: '#ef4444', isPlayer: false, speedMultiplier: 1.00 },
-  { name: 'Bot 2',  color: '#f97316', isPlayer: false, speedMultiplier: 1.00 },
-  { name: 'Bot 3',  color: '#a855f7', isPlayer: false, speedMultiplier: 1.00 },
-  { name: 'Bot 4',  color: '#ec4899', isPlayer: false, speedMultiplier: 1.00 },
+  { name: 'Bot 1',  color: '#ef4444', isPlayer: false, speedMultiplier: 0.80 },
+  { name: 'Bot 2',  color: '#f97316', isPlayer: false, speedMultiplier: 0.88 },
+  { name: 'Bot 3',  color: '#a855f7', isPlayer: false, speedMultiplier: 0.94 },
+  { name: 'Bot 4',  color: '#ec4899', isPlayer: false, speedMultiplier: 1.08 },
 ];
+
+// Mutable — set after map loads
+let BOUNDS = { minLng: 17.90, maxLng: 18.15, minLat: 59.27, maxLat: 59.40 };
+let roadLayerIds = [];
+
+const GAME_SETTINGS = { speedMultiplier: 1, winScore: 100 };
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -57,11 +63,69 @@ function lngLatDist(a, b) {
   return Math.sqrt(dLat * dLat + dLng * dLng);
 }
 
-function randomInZone() {
-  return {
-    lng: SPAWN_ZONE.minLng + Math.random() * (SPAWN_ZONE.maxLng - SPAWN_ZONE.minLng),
-    lat: SPAWN_ZONE.minLat + Math.random() * (SPAWN_ZONE.maxLat - SPAWN_ZONE.minLat),
-  };
+function randomLocation(excludePos) {
+  let pool = STOCKHOLM_LOCATIONS;
+  if (excludePos) {
+    const f = STOCKHOLM_LOCATIONS.filter(l => lngLatDist(l, excludePos) > 300);
+    if (f.length) pool = f;
+  }
+  return { ...pool[Math.floor(Math.random() * pool.length)] };
+}
+
+// ─── Road snapping (player) ───────────────────────────────────────────────────
+
+function initRoadLayers() {
+  roadLayerIds = map.getStyle().layers
+    .filter(l => l.type === 'line' && /road|bridge/.test(l.id) && !l.id.includes('case'))
+    .map(l => l.id);
+}
+
+function nearestPointOnSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq < 1e-14) return [ax, ay];
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+  return [ax + t * dx, ay + t * dy];
+}
+
+function snapToRoad(lng, lat) {
+  if (!roadLayerIds.length) return { lng, lat };
+  const pt = map.project([lng, lat]);
+  const B  = 35;
+  const features = map.queryRenderedFeatures(
+    [[pt.x - B, pt.y - B], [pt.x + B, pt.y + B]],
+    { layers: roadLayerIds }
+  ).slice(0, 12);
+  if (!features.length) return null;
+  let best = null, bestDist = Infinity;
+  for (const f of features) {
+    const rings = f.geometry.type === 'LineString'
+      ? [f.geometry.coordinates] : f.geometry.coordinates;
+    for (const coords of rings) {
+      for (let i = 0; i < coords.length - 1; i++) {
+        const [ax, ay] = coords[i], [bx, by] = coords[i + 1];
+        const [sx, sy] = nearestPointOnSegment(lng, lat, ax, ay, bx, by);
+        const d = Math.hypot(sx - lng, sy - lat);
+        if (d < bestDist) { bestDist = d; best = { lng: sx, lat: sy }; }
+      }
+    }
+  }
+  return best;
+}
+
+// ─── Directions API (bots) ────────────────────────────────────────────────────
+
+async function fetchRoute(fromLng, fromLat, toLng, toLat) {
+  try {
+    const url = `https://api.mapbox.com/directions/v5/mapbox/cycling/` +
+      `${fromLng},${fromLat};${toLng},${toLat}` +
+      `?geometries=geojson&overview=full&access_token=${MAPBOX_TOKEN}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.routes && data.routes.length > 0) return data.routes[0].geometry.coordinates;
+  } catch (_) {}
+  return null;
 }
 
 // ─── InputHandler ─────────────────────────────────────────────────────────────
@@ -71,7 +135,6 @@ class InputHandler {
     this.keys = new Set();
     this.spaceJustPressed = false;
     this._spaceHeld = false;
-
     window.addEventListener('keydown', (e) => {
       this.keys.add(e.key);
       if (e.key === ' ') {
@@ -79,19 +142,14 @@ class InputHandler {
         if (!this._spaceHeld) this.spaceJustPressed = true;
         this._spaceHeld = true;
       }
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-        e.preventDefault();
-      }
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) e.preventDefault();
     });
-
     window.addEventListener('keyup', (e) => {
       this.keys.delete(e.key);
       if (e.key === ' ') this._spaceHeld = false;
     });
   }
-
   isDown(key) { return this.keys.has(key); }
-
   clearFrame() { this.spaceJustPressed = false; }
 }
 
@@ -99,8 +157,7 @@ class InputHandler {
 
 class Racer {
   constructor(config, lng, lat) {
-    this.lng  = lng;
-    this.lat  = lat;
+    this.lng  = lng; this.lat = lat;
     this.name = config.name;
     this.color = config.color;
     this.isPlayer = config.isPlayer;
@@ -110,32 +167,71 @@ class Racer {
     this.stealFlashMs = 0;
     this.stealCooldownMs = 0;
     this.initial = config.isPlayer ? 'P' : config.name[4]; // '1','2','3','4'
+    // bot routing
+    this.waypoints = null;
+    this.waypointIndex = 0;
+    this.routeTarget = null;
+    this.fetchingRoute = false;
+    this.lastFetchTime = 0;
   }
 
   updateAsPlayer(dt, input) {
-    const s = this.speedMultiplier;
-    if (input.isDown('ArrowUp')    || input.isDown('w') || input.isDown('W'))
-      this.lat += SPEED_LAT * s * dt;
-    if (input.isDown('ArrowDown')  || input.isDown('s') || input.isDown('S'))
-      this.lat -= SPEED_LAT * s * dt;
-    if (input.isDown('ArrowLeft')  || input.isDown('a') || input.isDown('A'))
-      this.lng -= SPEED_LNG * s * dt;
-    if (input.isDown('ArrowRight') || input.isDown('d') || input.isDown('D'))
-      this.lng += SPEED_LNG * s * dt;
+    const s = this.speedMultiplier * GAME_SETTINGS.speedMultiplier;
+    let newLng = this.lng, newLat = this.lat;
+    if (input.isDown('ArrowUp')    || input.isDown('w') || input.isDown('W')) newLat += SPEED_LAT * s * dt;
+    if (input.isDown('ArrowDown')  || input.isDown('s') || input.isDown('S')) newLat -= SPEED_LAT * s * dt;
+    if (input.isDown('ArrowLeft')  || input.isDown('a') || input.isDown('A')) newLng -= SPEED_LNG * s * dt;
+    if (input.isDown('ArrowRight') || input.isDown('d') || input.isDown('D')) newLng += SPEED_LNG * s * dt;
+    if (newLng !== this.lng || newLat !== this.lat) {
+      const snapped = snapToRoad(newLng, newLat);
+      if (snapped) { this.lng = snapped.lng; this.lat = snapped.lat; }
+      // no road in snap radius → stay put
+    }
     this._clamp();
   }
 
   updateAsBot(dt, target) {
     if (!target) return;
-    const dx = target.lng - this.lng;
-    const dy = target.lat - this.lat;
-    const mag = Math.sqrt(dx * dx + dy * dy);
-    if (mag < 1e-9) return;
-    const s = this.speedMultiplier;
-    this.lng += (dx / mag) * SPEED_LNG * s * dt;
-    this.lat += (dy / mag) * SPEED_LAT * s * dt;
+    const s   = this.speedMultiplier * GAME_SETTINGS.speedMultiplier;
+    const now = Date.now();
+    const targetMoved = this.routeTarget && lngLatDist(target, this.routeTarget) > 60;
+
+    if ((targetMoved || !this.waypoints) && !this.fetchingRoute && now - this.lastFetchTime > 2500) {
+      if (targetMoved) this.waypoints = null;
+      this.fetchingRoute = true;
+      this.lastFetchTime = now;
+      this.routeTarget = { lng: target.lng, lat: target.lat };
+      fetchRoute(this.lng, this.lat, target.lng, target.lat).then(coords => {
+        if (coords && coords.length > 0) { this.waypoints = coords; this.waypointIndex = 0; }
+        this.fetchingRoute = false;
+      });
+    }
+
+    if (this.waypoints && this.waypointIndex < this.waypoints.length) {
+      const [wlng, wlat] = this.waypoints[this.waypointIndex];
+      if (lngLatDist(this, { lng: wlng, lat: wlat }) < 20) {
+        this.waypointIndex++;
+      } else {
+        const dx = wlng - this.lng, dy = wlat - this.lat;
+        const mag = Math.sqrt(dx * dx + dy * dy);
+        if (mag > 1e-9) {
+          this.lng += (dx / mag) * SPEED_LNG * s * dt;
+          this.lat += (dy / mag) * SPEED_LAT * s * dt;
+        }
+      }
+    } else {
+      // direct fallback while route loads
+      const dx = target.lng - this.lng, dy = target.lat - this.lat;
+      const mag = Math.sqrt(dx * dx + dy * dy);
+      if (mag > 1e-9) {
+        this.lng += (dx / mag) * SPEED_LNG * s * dt;
+        this.lat += (dy / mag) * SPEED_LAT * s * dt;
+      }
+    }
     this._clamp();
   }
+
+  clearRoute() { this.waypoints = null; this.routeTarget = null; }
 
   _clamp() {
     this.lng = Math.max(BOUNDS.minLng, Math.min(BOUNDS.maxLng, this.lng));
@@ -144,57 +240,29 @@ class Racer {
 
   draw(ctx, map, dt) {
     const pt = map.project([this.lng, this.lat]);
-    const x = pt.x, y = pt.y;
-    const R = 15;
-
+    const x = pt.x, y = pt.y, R = 15;
     if (this.stealFlashMs > 0) this.stealFlashMs -= dt * 1000;
-
     const fill = this.stealFlashMs > 0 ? '#ff3333' : this.color;
-
     ctx.save();
-
-    // Drop shadow
-    ctx.shadowColor = 'rgba(0,0,0,0.35)';
-    ctx.shadowBlur  = 8;
-
-    // Body circle
-    ctx.beginPath();
-    ctx.arc(x, y, R, 0, Math.PI * 2);
-    ctx.fillStyle   = fill;
-    ctx.fill();
-    ctx.shadowBlur  = 0;
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth   = 2.5;
-    ctx.stroke();
-
-    // Package indicator ring
+    ctx.shadowColor = 'rgba(0,0,0,0.35)'; ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2);
+    ctx.fillStyle = fill; ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2.5; ctx.stroke();
     if (this.hasPackage) {
-      ctx.beginPath();
-      ctx.arc(x, y, R + 6, 0, Math.PI * 2);
-      ctx.strokeStyle = '#facc15';
-      ctx.lineWidth   = 3;
-      ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y, R + 6, 0, Math.PI * 2);
+      ctx.strokeStyle = '#facc15'; ctx.lineWidth = 3; ctx.stroke();
     }
-
-    // Initial letter
-    ctx.fillStyle       = '#ffffff';
-    ctx.font            = `bold ${R}px Arial`;
-    ctx.textAlign       = 'center';
-    ctx.textBaseline    = 'middle';
+    ctx.fillStyle = '#ffffff'; ctx.font = `bold ${R}px Arial`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(this.initial, x, y);
-
-    // Name label below
-    ctx.fillStyle    = 'rgba(15,23,42,0.8)';
-    ctx.font         = '11px Arial';
-    ctx.textBaseline = 'top';
-    // Small background pill
-    const labelW = ctx.measureText(this.name).width + 8;
+    ctx.font = '11px Arial'; ctx.textBaseline = 'top';
+    const lw = ctx.measureText(this.name).width + 8;
     ctx.fillStyle = 'rgba(255,255,255,0.75)';
-    ctx.fillRect(x - labelW / 2, y + R + 3, labelW, 14);
-    ctx.fillStyle    = '#1e293b';
-    ctx.fillText(this.name, x, y + R + 4);
+    ctx.fillRect(x - lw / 2, y + R + 3, lw, 14);
+    ctx.fillStyle = '#1e293b'; ctx.fillText(this.name, x, y + R + 4);
 
-    // Direction arrows — only for the human player
+    // Direction arrows for player
     if (this.isPlayer && gs) {
       let arrowTarget = null;
       if (gs.phase === 'SEEKING') {
@@ -205,29 +273,23 @@ class Racer {
           : (gs.racers.find(r => r.hasPackage) || null);
       }
       if (arrowTarget) {
-        const tpt = map.project([arrowTarget.lng, arrowTarget.lat]);
+        const tpt   = map.project([arrowTarget.lng, arrowTarget.lat]);
         const angle = Math.atan2(tpt.y - y, tpt.x - x);
-        const sz = 8;
+        const sz    = 8;
         for (let i = 0; i < 3; i++) {
-          const dist = R + 22 + i * 14;
+          const d = R + 22 + i * 14;
           ctx.save();
-          ctx.translate(x + Math.cos(angle) * dist, y + Math.sin(angle) * dist);
+          ctx.translate(x + Math.cos(angle) * d, y + Math.sin(angle) * d);
           ctx.rotate(angle);
           ctx.beginPath();
-          ctx.moveTo(sz, 0);
-          ctx.lineTo(-sz * 0.65, sz * 0.65);
-          ctx.lineTo(-sz * 0.65, -sz * 0.65);
+          ctx.moveTo(sz, 0); ctx.lineTo(-sz * 0.65, sz * 0.65); ctx.lineTo(-sz * 0.65, -sz * 0.65);
           ctx.closePath();
-          ctx.fillStyle   = '#22c55e';
-          ctx.fill();
-          ctx.strokeStyle = '#ffffff';
-          ctx.lineWidth   = 2.5;
-          ctx.stroke();
+          ctx.fillStyle = '#22c55e'; ctx.fill();
+          ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2.5; ctx.stroke();
           ctx.restore();
         }
       }
     }
-
     ctx.restore();
   }
 }
@@ -235,20 +297,13 @@ class Racer {
 // ─── Package ─────────────────────────────────────────────────────────────────
 
 class Package {
-  constructor(lng, lat) {
-    this.lng    = lng;
-    this.lat    = lat;
-    this.isHeld = false;
-    this.holder = null;
-    this.type   = randomItemType();
-  }
+  constructor(loc) { this.reset(loc); }
 
-  reset(lng, lat) {
-    this.lng    = lng;
-    this.lat    = lat;
-    this.isHeld = false;
-    this.holder = null;
-    this.type   = randomItemType();
+  reset(loc) {
+    this.lng = loc.lng; this.lat = loc.lat;
+    this.locName = loc.name;
+    this.isHeld = false; this.holder = null;
+    this.type = randomItemType();
   }
 
   draw(ctx, map) {
@@ -256,38 +311,17 @@ class Package {
     const pt = map.project([this.lng, this.lat]);
     const x = pt.x, y = pt.y;
     const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 280);
-
     ctx.save();
-
-    // Glow (colour shifts by rarity: common=yellow, rare=purple)
     const glowColor = this.type.points >= 20
-      ? `rgba(168,85,247,${pulse * 0.9})`
-      : `rgba(250,204,21,${pulse * 0.8})`;
-    ctx.shadowColor = glowColor;
-    ctx.shadowBlur  = 18;
-
-    // Box body
-    ctx.fillStyle   = '#facc15';
-    ctx.strokeStyle = '#b45309';
-    ctx.lineWidth   = 2;
-    _roundRect(ctx, x - 14, y - 14, 28, 28, 5);
-    ctx.fill();
-    ctx.stroke();
-
+      ? `rgba(168,85,247,${pulse * 0.9})` : `rgba(250,204,21,${pulse * 0.8})`;
+    ctx.shadowColor = glowColor; ctx.shadowBlur = 18;
+    ctx.fillStyle = '#facc15'; ctx.strokeStyle = '#b45309'; ctx.lineWidth = 2;
+    _roundRect(ctx, x - 14, y - 14, 28, 28, 5); ctx.fill(); ctx.stroke();
     ctx.shadowBlur = 0;
-
-    // Item emoji
-    ctx.font         = '18px Arial';
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'middle';
+    ctx.font = '18px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(this.type.emoji, x, y);
-
-    // Item name + points label above
-    ctx.fillStyle    = '#1e293b';
-    ctx.font         = 'bold 10px Arial';
-    ctx.textBaseline = 'bottom';
-    ctx.fillText(`${this.type.name} (+${this.type.points}pt)`, x, y - 17);
-
+    ctx.fillStyle = '#1e293b'; ctx.font = 'bold 10px Arial'; ctx.textBaseline = 'bottom';
+    ctx.fillText(`${this.locName} · ${this.type.name} (+${this.type.points}pt)`, x, y - 17);
     ctx.restore();
   }
 }
@@ -295,63 +329,32 @@ class Package {
 // ─── DeliveryPoint ───────────────────────────────────────────────────────────
 
 class DeliveryPoint {
-  constructor(lng, lat) {
-    this.lng = lng;
-    this.lat = lat;
-  }
+  constructor(loc) { this.lng = loc.lng; this.lat = loc.lat; this.locName = loc.name; }
 
   draw(ctx, map) {
     const pt = map.project([this.lng, this.lat]);
     const x = pt.x, y = pt.y;
     const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 380);
-    const outerR = 28 + 8 * pulse;
-
     ctx.save();
-
-    // Outer pulsing ring
-    ctx.beginPath();
-    ctx.arc(x, y, outerR, 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(34,197,94,${0.35 + 0.3 * pulse})`;
-    ctx.lineWidth   = 3;
-    ctx.stroke();
-
-    // Inner filled circle
-    ctx.beginPath();
-    ctx.arc(x, y, 20, 0, Math.PI * 2);
-    ctx.fillStyle   = 'rgba(34,197,94,0.25)';
-    ctx.fill();
-    ctx.strokeStyle = '#22c55e';
-    ctx.lineWidth   = 3;
-    ctx.stroke();
-
-    // Checkmark
-    ctx.strokeStyle = '#16a34a';
-    ctx.lineWidth   = 3;
-    ctx.lineCap     = 'round';
-    ctx.lineJoin    = 'round';
-    ctx.beginPath();
-    ctx.moveTo(x - 7, y);
-    ctx.lineTo(x - 1, y + 7);
-    ctx.lineTo(x + 8, y - 7);
-    ctx.stroke();
-
-    // "DELIVER" label
-    ctx.fillStyle    = '#15803d';
-    ctx.font         = 'bold 11px Arial';
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'top';
-    ctx.fillText('DELIVER HERE', x, y + 23);
-
+    ctx.beginPath(); ctx.arc(x, y, 28 + 8 * pulse, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(34,197,94,${0.35 + 0.3 * pulse})`; ctx.lineWidth = 3; ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y, 20, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(34,197,94,0.25)'; ctx.fill();
+    ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 3; ctx.stroke();
+    ctx.strokeStyle = '#16a34a'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.moveTo(x - 7, y); ctx.lineTo(x - 1, y + 7); ctx.lineTo(x + 8, y - 7); ctx.stroke();
+    ctx.fillStyle = '#15803d'; ctx.font = 'bold 11px Arial';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillText(this.locName, x, y + 24);
     ctx.restore();
   }
 }
 
-// ─── Canvas helper ───────────────────────────────────────────────────────────
+// ─── Canvas helper ────────────────────────────────────────────────────────────
 
 function _roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
+  ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
   ctx.quadraticCurveTo(x + w, y, x + w, y + r);
   ctx.lineTo(x + w, y + h - r);
   ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
@@ -365,36 +368,30 @@ function _roundRect(ctx, x, y, w, h, r) {
 // ─── Game state ───────────────────────────────────────────────────────────────
 
 let map, canvas, ctx, input;
-let gs; // game state object
+let gs;
 let lastTimestamp = null;
 let rafId = null;
 
 function createGameState() {
-  const spawnPositions = [
-    { lng: 18.07,  lat: 59.330 },
-    { lng: 18.055, lat: 59.338 },
-    { lng: 18.085, lat: 59.338 },
-    { lng: 18.055, lat: 59.322 },
-    { lng: 18.085, lat: 59.322 },
+  const spawns = [
+    STOCKHOLM_LOCATIONS.find(l => l.name === 'Sergels Torg'),
+    STOCKHOLM_LOCATIONS.find(l => l.name === 'Gamla Stan'),
+    STOCKHOLM_LOCATIONS.find(l => l.name === 'Medborgarplatsen'),
+    STOCKHOLM_LOCATIONS.find(l => l.name === 'Stureplan'),
+    STOCKHOLM_LOCATIONS.find(l => l.name === 'Slussen'),
   ];
-
-  const racers = RACER_CONFIGS.map((cfg, i) =>
-    new Racer(cfg, spawnPositions[i].lng, spawnPositions[i].lat)
-  );
-
-  const pkgPos = randomInZone();
-
+  const racers = RACER_CONFIGS.map((cfg, i) => new Racer(cfg, spawns[i].lng, spawns[i].lat));
   return {
     phase: 'SEEKING',
     racers,
-    pkg: new Package(pkgPos.lng, pkgPos.lat),
+    pkg: new Package(randomLocation()),
     delivery: null,
     announcementMs: 0,
     winner: null,
   };
 }
 
-// ─── Main loop ────────────────────────────────────────────────────────────────
+// ─── Loop ─────────────────────────────────────────────────────────────────────
 
 function startGame() {
   if (rafId) cancelAnimationFrame(rafId);
@@ -408,147 +405,83 @@ function startGame() {
 
 function loop(ts) {
   if (gs.winner) { showWinScreen(gs.winner); return; }
-
   const dt = lastTimestamp === null ? 0 : Math.min((ts - lastTimestamp) / 1000, 0.1);
   lastTimestamp = ts;
-
   update(dt);
   render(dt);
   input.clearFrame();
-
   rafId = requestAnimationFrame(loop);
 }
 
 // ─── Update ───────────────────────────────────────────────────────────────────
 
 function update(dt) {
-  // Tick steal cooldowns
-  for (const racer of gs.racers) {
-    if (racer.stealCooldownMs > 0) racer.stealCooldownMs -= dt * 1000;
-  }
-
-  // Move player
+  for (const r of gs.racers) { if (r.stealCooldownMs > 0) r.stealCooldownMs -= dt * 1000; }
   gs.racers[0].updateAsPlayer(dt, input);
-
-  // Move bots
-  for (let i = 1; i < gs.racers.length; i++) {
-    gs.racers[i].updateAsBot(dt, botTarget(gs.racers[i]));
-  }
-
-  // Sync package to holder
-  if (gs.pkg.isHeld && gs.pkg.holder) {
-    gs.pkg.lng = gs.pkg.holder.lng;
-    gs.pkg.lat = gs.pkg.holder.lat;
-  }
-
-  // Phase logic
-  if (gs.phase === 'SEEKING') {
-    updateSeeking();
-  } else {
-    updateDelivering();
-  }
-
-  // Tick announcement
+  for (let i = 1; i < gs.racers.length; i++) gs.racers[i].updateAsBot(dt, botTarget(gs.racers[i]));
+  if (gs.pkg.isHeld && gs.pkg.holder) { gs.pkg.lng = gs.pkg.holder.lng; gs.pkg.lat = gs.pkg.holder.lat; }
+  gs.phase === 'SEEKING' ? updateSeeking() : updateDelivering();
   if (gs.announcementMs > 0) {
     gs.announcementMs -= dt * 1000;
-    if (gs.announcementMs <= 0) {
-      document.getElementById('hud-announcement').style.display = 'none';
-    }
+    if (gs.announcementMs <= 0) document.getElementById('hud-announcement').style.display = 'none';
   }
 }
 
 function botTarget(bot) {
   if (gs.phase === 'SEEKING') return gs.pkg;
-  if (bot.hasPackage)         return gs.delivery;
-  // seek whoever holds the package
+  if (bot.hasPackage) return gs.delivery;
   return gs.racers.find(r => r.hasPackage) || gs.delivery;
 }
 
 function updateSeeking() {
-  for (const racer of gs.racers) {
-    if (lngLatDist(racer, gs.pkg) < PICKUP_RADIUS) {
-      pickupPackage(racer);
-      return;
-    }
+  for (const r of gs.racers) {
+    if (lngLatDist(r, gs.pkg) < PICKUP_RADIUS) { pickupPackage(r); return; }
   }
 }
 
 function pickupPackage(racer) {
-  racer.hasPackage  = true;
-  gs.pkg.isHeld     = true;
-  gs.pkg.holder     = racer;
-
-  // Spawn delivery point far enough from current package location
-  let pos, attempts = 0;
-  do { pos = randomInZone(); attempts++; }
-  while (lngLatDist(pos, gs.pkg) < 300 && attempts < 30);
-
-  gs.delivery = new DeliveryPoint(pos.lng, pos.lat);
-  gs.phase    = 'DELIVERING';
-
-  announce(`${racer.name} picked up ${gs.pkg.type.emoji} ${gs.pkg.type.name}! Deliver for ${gs.pkg.type.points}pts!`);
-  setPhaseHUD();
-  updateScoreHUD();
+  racer.hasPackage = true; gs.pkg.isHeld = true; gs.pkg.holder = racer;
+  const delivLoc = randomLocation(gs.pkg);
+  gs.delivery = new DeliveryPoint(delivLoc);
+  gs.phase = 'DELIVERING';
+  gs.racers.forEach(r => r.clearRoute());
+  announce(`${racer.name} got ${gs.pkg.type.emoji} ${gs.pkg.type.name} at ${gs.pkg.locName}! Deliver to ${delivLoc.name} for ${gs.pkg.type.points}pts!`);
+  setPhaseHUD(); updateScoreHUD();
 }
 
 function updateDelivering() {
   const holder = gs.racers.find(r => r.hasPackage);
   if (!holder) return;
-
-  // Delivery check (takes priority)
-  if (lngLatDist(holder, gs.delivery) < DELIVERY_RADIUS) {
-    deliverPackage(holder);
-    return;
-  }
-
+  if (lngLatDist(holder, gs.delivery) < DELIVERY_RADIUS) { deliverPackage(holder); return; }
   if (holder.stealCooldownMs > 0) return;
-
-  // Bot auto-steal (only first eligible bot fires per frame)
   for (let i = 1; i < gs.racers.length; i++) {
     const bot = gs.racers[i];
-    if (bot.hasPackage) continue;
-    if (lngLatDist(bot, holder) < STEAL_RADIUS) {
-      stealPackage(bot, holder);
-      return;
-    }
+    if (!bot.hasPackage && lngLatDist(bot, holder) < STEAL_RADIUS) { stealPackage(bot, holder); return; }
   }
-
-  // Player steal (requires Space)
   const player = gs.racers[0];
-  if (!player.hasPackage && input.spaceJustPressed) {
-    if (lngLatDist(player, holder) < STEAL_RADIUS) {
-      stealPackage(player, holder);
-    }
+  if (!player.hasPackage && input.spaceJustPressed && lngLatDist(player, holder) < STEAL_RADIUS) {
+    stealPackage(player, holder);
   }
 }
 
 function stealPackage(thief, victim) {
-  victim.hasPackage    = false;
-  thief.hasPackage     = true;
-  gs.pkg.holder        = thief;
-  victim.stealFlashMs  = 600;
-  victim.stealCooldownMs = STEAL_COOLDOWN_MS;
+  victim.hasPackage = false; thief.hasPackage = true;
+  gs.pkg.holder = thief;
+  victim.stealFlashMs = 600; victim.stealCooldownMs = STEAL_COOLDOWN_MS;
+  thief.clearRoute();
   announce(`${thief.name} stole the ${gs.pkg.type.name} from ${victim.name}!`);
 }
 
 function deliverPackage(holder) {
   const pts = gs.pkg.type.points;
-  holder.score += pts;
-  holder.hasPackage = false;
-  gs.pkg.isHeld     = false;
-  gs.pkg.holder     = null;
-  gs.delivery       = null;
-
+  const delivName = gs.delivery.locName;
+  holder.score += pts; holder.hasPackage = false;
+  gs.pkg.isHeld = false; gs.pkg.holder = null; gs.delivery = null;
+  gs.racers.forEach(r => r.clearRoute());
   updateScoreHUD();
-  announce(`${holder.name} delivered ${gs.pkg.type.emoji} ${gs.pkg.type.name}! +${pts}pts (${holder.score} total)`);
-
-  if (holder.score >= WIN_SCORE) {
-    gs.winner = holder;
-    return;
-  }
-
-  const p = randomInZone();
-  gs.pkg.reset(p.lng, p.lat);
+  announce(`${holder.name} delivered ${gs.pkg.type.emoji} to ${delivName}! +${pts}pts (${holder.score} total)`);
+  if (holder.score >= GAME_SETTINGS.winScore) { gs.winner = holder; return; }
+  gs.pkg.reset(randomLocation());
   gs.phase = 'SEEKING';
   setPhaseHUD();
 }
@@ -557,82 +490,106 @@ function deliverPackage(holder) {
 
 function render(dt) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  if (gs.delivery)    gs.delivery.draw(ctx, map);
+  if (gs.delivery) gs.delivery.draw(ctx, map);
   if (!gs.pkg.isHeld) gs.pkg.draw(ctx, map);
-
-  for (const racer of gs.racers) racer.draw(ctx, map, dt);
+  for (const r of gs.racers) r.draw(ctx, map, dt);
 }
 
-// ─── HUD helpers ─────────────────────────────────────────────────────────────
+// ─── HUD ──────────────────────────────────────────────────────────────────────
 
 function announce(text) {
   const el = document.getElementById('hud-announcement');
-  el.textContent = text;
-  el.style.display = 'block';
+  el.textContent = text; el.style.display = 'block';
   gs.announcementMs = 2500;
 }
 
 function setPhaseHUD() {
   const el = document.getElementById('hud-phase');
   if (gs.phase === 'SEEKING') {
-    el.textContent = 'Phase 1: Race to the package!';
-    el.className   = 'phase-seeking';
+    el.textContent = `Phase 1: Race to ${gs.pkg.locName}!`;
+    el.className = 'phase-seeking';
   } else {
-    const holder = gs.racers.find(r => r.hasPackage);
-    el.textContent = `Phase 2: ${holder ? holder.name : '?'} must deliver!`;
-    el.className   = 'phase-delivering';
+    const dest = gs.delivery ? gs.delivery.locName : '?';
+    el.textContent = `Phase 2: Deliver to ${dest}!`;
+    el.className = 'phase-delivering';
   }
 }
 
 function updateScoreHUD() {
-  const el = document.getElementById('hud-scores');
-  el.innerHTML = gs.racers
-    .slice()
-    .sort((a, b) => b.score - a.score)
+  document.getElementById('hud-scores').innerHTML = gs.racers
+    .slice().sort((a, b) => b.score - a.score)
     .map(r => `<div class="score-row" style="--color:${r.color}">
       <span class="score-name">${r.name}</span>
       <span class="score-val">${r.score}</span>
-    </div>`)
-    .join('');
+    </div>`).join('');
 }
 
 function showWinScreen(racer) {
-  const el = document.getElementById('win-screen');
   const nm = document.getElementById('win-name');
-  nm.textContent = racer.name;
-  nm.style.color = racer.color;
-  el.style.display = 'flex';
+  nm.textContent = racer.name; nm.style.color = racer.color;
+  document.getElementById('win-screen').style.display = 'flex';
 }
 
-// ─── Bootstrap ───────────────────────────────────────────────────────────────
+// ─── Settings ─────────────────────────────────────────────────────────────────
+
+function initSettings() {
+  document.getElementById('btn-settings').addEventListener('click', () => {
+    document.getElementById('settings-panel').classList.toggle('visible');
+  });
+  document.getElementById('btn-close-settings').addEventListener('click', () => {
+    document.getElementById('settings-panel').classList.remove('visible');
+  });
+  document.getElementById('btn-newgame-settings').addEventListener('click', () => {
+    document.getElementById('settings-panel').classList.remove('visible');
+    startGame();
+  });
+  document.querySelectorAll('#setting-speed button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#setting-speed button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      GAME_SETTINGS.speedMultiplier = parseFloat(btn.dataset.val);
+    });
+  });
+  document.querySelectorAll('#setting-win button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#setting-win button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      GAME_SETTINGS.winScore = parseInt(btn.dataset.val);
+    });
+  });
+}
+
+// ─── Bootstrap ────────────────────────────────────────────────────────────────
+
+function initBounds() {
+  const b = map.getBounds();
+  BOUNDS = { minLng: b.getWest(), maxLng: b.getEast(), minLat: b.getSouth(), maxLat: b.getNorth() };
+}
 
 function syncCanvasSize() {
   const c = map.getContainer();
-  canvas.width  = c.offsetWidth;
-  canvas.height = c.offsetHeight;
+  canvas.width = c.offsetWidth; canvas.height = c.offsetHeight;
 }
 
 window.addEventListener('DOMContentLoaded', () => {
   mapboxgl.accessToken = MAPBOX_TOKEN;
-
   map = new mapboxgl.Map({
     container: 'map',
-    style:     'mapbox://styles/mapbox/streets-v12',
-    center:    [18.07, 59.33],
-    zoom:      14,
+    style: 'mapbox://styles/mapbox/streets-v12',
+    center: [18.07, 59.33],
+    zoom: 14,
     interactive: false,
   });
-
   canvas = document.getElementById('gameCanvas');
   ctx    = canvas.getContext('2d');
   input  = new InputHandler();
-
+  initSettings();
   map.on('load', () => {
     syncCanvasSize();
-    window.addEventListener('resize', syncCanvasSize);
+    initBounds();
+    initRoadLayers();
+    window.addEventListener('resize', () => { syncCanvasSize(); initBounds(); });
     startGame();
   });
-
   document.getElementById('btn-restart').addEventListener('click', startGame);
 });
