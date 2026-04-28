@@ -194,6 +194,40 @@ class Racer {
     ctx.fillStyle    = '#1e293b';
     ctx.fillText(this.name, x, y + R + 4);
 
+    // Direction arrows — only for the human player
+    if (this.isPlayer && gs) {
+      let arrowTarget = null;
+      if (gs.phase === 'SEEKING') {
+        arrowTarget = gs.pkg;
+      } else {
+        arrowTarget = this.hasPackage
+          ? gs.delivery
+          : (gs.racers.find(r => r.hasPackage) || null);
+      }
+      if (arrowTarget) {
+        const tpt = map.project([arrowTarget.lng, arrowTarget.lat]);
+        const angle = Math.atan2(tpt.y - y, tpt.x - x);
+        const sz = 8;
+        for (let i = 0; i < 3; i++) {
+          const dist = R + 22 + i * 14;
+          ctx.save();
+          ctx.translate(x + Math.cos(angle) * dist, y + Math.sin(angle) * dist);
+          ctx.rotate(angle);
+          ctx.beginPath();
+          ctx.moveTo(sz, 0);
+          ctx.lineTo(-sz * 0.65, sz * 0.65);
+          ctx.lineTo(-sz * 0.65, -sz * 0.65);
+          ctx.closePath();
+          ctx.fillStyle   = '#22c55e';
+          ctx.fill();
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth   = 2.5;
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+    }
+
     ctx.restore();
   }
 }
