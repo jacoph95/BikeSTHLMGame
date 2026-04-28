@@ -95,6 +95,8 @@ class InputHandler {
     this._spaceHeld = false;
     this.fJustPressed = false;
     this._fHeld = false;
+    this.zeroJustPressed = false;
+    this._zeroHeld = false;
     window.addEventListener('keydown', (e) => {
       this.keys.add(e.key);
       if (e.key === ' ') {
@@ -106,16 +108,22 @@ class InputHandler {
         if (!this._fHeld) this.fJustPressed = true;
         this._fHeld = true;
       }
+      if (e.key === '0') {
+        if (paused) resumeGame();
+        else if (!this._zeroHeld) this.zeroJustPressed = true;
+        this._zeroHeld = true;
+      }
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) e.preventDefault();
     });
     window.addEventListener('keyup', (e) => {
       this.keys.delete(e.key);
       if (e.key === ' ') this._spaceHeld = false;
       if (e.key === 'f' || e.key === 'F') this._fHeld = false;
+      if (e.key === '0') this._zeroHeld = false;
     });
   }
   isDown(key) { return this.keys.has(key); }
-  clearFrame() { this.spaceJustPressed = false; this.fJustPressed = false; }
+  clearFrame() { this.spaceJustPressed = false; this.fJustPressed = false; this.zeroJustPressed = false; }
 }
 
 // ─── Racer ───────────────────────────────────────────────────────────────────
@@ -399,6 +407,7 @@ let minimapMap, minimapCanvas, minimapCtx, minimapReady = false;
 let gs;
 let lastTimestamp = null;
 let rafId = null;
+let paused = false;
 
 function createGameState() {
   const spawns = [
@@ -426,10 +435,26 @@ function createGameState() {
 
 // ─── Loop ─────────────────────────────────────────────────────────────────────
 
+function pauseGame() {
+  paused = true;
+  cancelAnimationFrame(rafId);
+  rafId = null;
+  document.getElementById('pause-screen').style.display = 'flex';
+}
+
+function resumeGame() {
+  paused = false;
+  document.getElementById('pause-screen').style.display = 'none';
+  lastTimestamp = null;
+  rafId = requestAnimationFrame(loop);
+}
+
 function startGame() {
   if (rafId) cancelAnimationFrame(rafId);
   lastTimestamp = null;
   document.getElementById('win-screen').style.display = 'none';
+  document.getElementById('pause-screen').style.display = 'none';
+  paused = false;
   gs = createGameState();
   updateScoreHUD();
   setPhaseHUD();
@@ -438,6 +463,7 @@ function startGame() {
 
 function loop(ts) {
   if (gs.winner) { showWinScreen(gs.winner); return; }
+  if (input.zeroJustPressed) { input.clearFrame(); pauseGame(); return; }
   const dt = lastTimestamp === null ? 0 : Math.min((ts - lastTimestamp) / 1000, 0.1);
   lastTimestamp = ts;
   update(dt);
@@ -705,6 +731,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // Block scroll/pinch zoom reaching the map through the pointer-events:none canvas
   document.getElementById('map').addEventListener('wheel', e => e.preventDefault(), { passive: false });
 
+  document.getElementById('btn-resume').addEventListener('click', resumeGame);
   document.getElementById('btn-restart').addEventListener('click', startGame);
   document.querySelectorAll('.player-opt').forEach(btn => {
     btn.addEventListener('click', () => {
