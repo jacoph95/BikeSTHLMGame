@@ -480,6 +480,10 @@ function update(dt) {
     gs.announcementMs -= dt * 1000;
     if (gs.announcementMs <= 0) document.getElementById('hud-announcement').style.display = 'none';
   }
+
+  // Keep map centred on the player
+  const player = gs.racers[0];
+  map.easeTo({ center: [player.lng, player.lat], duration: 100, easing: t => t });
 }
 
 function botTarget(bot) {
@@ -649,6 +653,7 @@ window.addEventListener('DOMContentLoaded', () => {
     initBounds();
     initRoadLayers();
     window.addEventListener('resize', () => { syncCanvasSize(); initBounds(); });
+    map.on('move', initBounds);
     startGame();
   });
 
