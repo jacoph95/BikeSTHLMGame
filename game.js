@@ -7,10 +7,28 @@ const SPEED_LNG    = 0.0000733; // degrees/sec (corrected for Stockholm latitude
 const M_PER_DEG_LAT = 111320;
 const M_PER_DEG_LNG = 56900;   // 111320 * cos(59.3° * π/180)
 
-const PICKUP_RADIUS   = 30;    // meters
-const DELIVERY_RADIUS = 40;    // meters
-const STEAL_RADIUS    = 35;    // meters
-const WIN_SCORE       = 5;
+const PICKUP_RADIUS    = 30;   // meters
+const DELIVERY_RADIUS  = 40;   // meters
+const STEAL_RADIUS     = 35;   // meters
+const WIN_SCORE        = 100;
+const STEAL_COOLDOWN_MS = 2000;
+
+const ITEM_TYPES = [
+  { name: 'Hot Dog',     emoji: '🌭', points: 5,  weight: 65 },
+  { name: 'Nocco',       emoji: '🥤', points: 10, weight: 20 },
+  { name: 'Snus',        emoji: '🫙', points: 20, weight: 10 },
+  { name: 'Kanelbullar', emoji: '🍩', points: 30, weight: 5  },
+];
+
+function randomItemType() {
+  const total = ITEM_TYPES.reduce((s, t) => s + t.weight, 0);
+  let r = Math.random() * total;
+  for (const t of ITEM_TYPES) {
+    r -= t.weight;
+    if (r <= 0) return t;
+  }
+  return ITEM_TYPES[0];
+}
 
 const BOUNDS = {
   minLng: 17.90, maxLng: 18.15,
@@ -90,6 +108,7 @@ class Racer {
     this.hasPackage = false;
     this.score = 0;
     this.stealFlashMs = 0;
+    this.stealCooldownMs = 0;
   }
 
   updateAsPlayer(dt, input) {
@@ -202,6 +221,40 @@ class Racer {
     ctx.fillStyle = '#1e293b';
     ctx.fillText(this.name, x, y + 17);
 
+    // Direction arrows — only for the human player
+    if (this.isPlayer && gs) {
+      let arrowTarget = null;
+      if (gs.phase === 'SEEKING') {
+        arrowTarget = gs.pkg;
+      } else {
+        arrowTarget = this.hasPackage
+          ? gs.delivery
+          : (gs.racers.find(r => r.hasPackage) || null);
+      }
+      if (arrowTarget) {
+        const tpt = map.project([arrowTarget.lng, arrowTarget.lat]);
+        const angle = Math.atan2(tpt.y - y, tpt.x - x);
+        const sz = 8;
+        for (let i = 0; i < 3; i++) {
+          const dist = R + 22 + i * 14;
+          ctx.save();
+          ctx.translate(x + Math.cos(angle) * dist, y + Math.sin(angle) * dist);
+          ctx.rotate(angle);
+          ctx.beginPath();
+          ctx.moveTo(sz, 0);
+          ctx.lineTo(-sz * 0.65, sz * 0.65);
+          ctx.lineTo(-sz * 0.65, -sz * 0.65);
+          ctx.closePath();
+          ctx.fillStyle   = '#22c55e';
+          ctx.fill();
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth   = 2.5;
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+    }
+
     ctx.restore();
   }
 }
@@ -214,6 +267,7 @@ class Package {
     this.lat    = lat;
     this.isHeld = false;
     this.holder = null;
+    this.type   = randomItemType();
   }
 
   reset(lng, lat) {
@@ -221,6 +275,7 @@ class Package {
     this.lat    = lat;
     this.isHeld = false;
     this.holder = null;
+    this.type   = randomItemType();
   }
 
   draw(ctx, map) {
@@ -231,34 +286,34 @@ class Package {
 
     ctx.save();
 
-    // Glow
-    ctx.shadowColor = `rgba(250,204,21,${pulse * 0.8})`;
-    ctx.shadowBlur  = 16;
+    // Glow (colour shifts by rarity: common=yellow, rare=purple)
+    const glowColor = this.type.points >= 20
+      ? `rgba(168,85,247,${pulse * 0.9})`
+      : `rgba(250,204,21,${pulse * 0.8})`;
+    ctx.shadowColor = glowColor;
+    ctx.shadowBlur  = 18;
 
     // Box body
     ctx.fillStyle   = '#facc15';
     ctx.strokeStyle = '#b45309';
     ctx.lineWidth   = 2;
-    _roundRect(ctx, x - 13, y - 13, 26, 26, 5);
+    _roundRect(ctx, x - 14, y - 14, 28, 28, 5);
     ctx.fill();
     ctx.stroke();
 
     ctx.shadowBlur = 0;
 
-    // Ribbon cross
-    ctx.strokeStyle = '#b45309';
-    ctx.lineWidth   = 2;
-    ctx.beginPath();
-    ctx.moveTo(x - 13, y); ctx.lineTo(x + 13, y);
-    ctx.moveTo(x, y - 13); ctx.lineTo(x, y + 13);
-    ctx.stroke();
-
-    // "PKG" label above
-    ctx.fillStyle    = '#92400e';
-    ctx.font         = 'bold 10px Arial';
+    // Item emoji
+    ctx.font         = '18px Arial';
     ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(this.type.emoji, x, y);
+
+    // Item name + points label above
+    ctx.fillStyle    = '#1e293b';
+    ctx.font         = 'bold 10px Arial';
     ctx.textBaseline = 'bottom';
-    ctx.fillText('PKG', x, y - 15);
+    ctx.fillText(`${this.type.name} (+${this.type.points}pt)`, x, y - 17);
 
     ctx.restore();
   }
@@ -394,6 +449,11 @@ function loop(ts) {
 // ─── Update ───────────────────────────────────────────────────────────────────
 
 function update(dt) {
+  // Tick steal cooldowns
+  for (const racer of gs.racers) {
+    if (racer.stealCooldownMs > 0) racer.stealCooldownMs -= dt * 1000;
+  }
+
   // Move player
   gs.racers[0].updateAsPlayer(dt, input);
 
@@ -453,7 +513,7 @@ function pickupPackage(racer) {
   gs.delivery = new DeliveryPoint(pos.lng, pos.lat);
   gs.phase    = 'DELIVERING';
 
-  announce(`${racer.name} picked up the package! Deliver it!`);
+  announce(`${racer.name} picked up ${gs.pkg.type.emoji} ${gs.pkg.type.name}! Deliver for ${gs.pkg.type.points}pts!`);
   setPhaseHUD();
   updateScoreHUD();
 }
@@ -467,6 +527,8 @@ function updateDelivering() {
     deliverPackage(holder);
     return;
   }
+
+  if (holder.stealCooldownMs > 0) return;
 
   // Bot auto-steal (only first eligible bot fires per frame)
   for (let i = 1; i < gs.racers.length; i++) {
@@ -488,22 +550,24 @@ function updateDelivering() {
 }
 
 function stealPackage(thief, victim) {
-  victim.hasPackage  = false;
-  thief.hasPackage   = true;
-  gs.pkg.holder      = thief;
-  victim.stealFlashMs = 600;
-  announce(`${thief.name} stole the package from ${victim.name}!`);
+  victim.hasPackage    = false;
+  thief.hasPackage     = true;
+  gs.pkg.holder        = thief;
+  victim.stealFlashMs  = 600;
+  victim.stealCooldownMs = STEAL_COOLDOWN_MS;
+  announce(`${thief.name} stole the ${gs.pkg.type.name} from ${victim.name}!`);
 }
 
 function deliverPackage(holder) {
-  holder.score++;
+  const pts = gs.pkg.type.points;
+  holder.score += pts;
   holder.hasPackage = false;
   gs.pkg.isHeld     = false;
   gs.pkg.holder     = null;
   gs.delivery       = null;
 
   updateScoreHUD();
-  announce(`${holder.name} delivered! +1 point 🎉`);
+  announce(`${holder.name} delivered ${gs.pkg.type.emoji} ${gs.pkg.type.name}! +${pts}pts (${holder.score} total)`);
 
   if (holder.score >= WIN_SCORE) {
     gs.winner = holder;
