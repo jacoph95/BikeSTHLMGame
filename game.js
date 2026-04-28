@@ -52,6 +52,7 @@ const RACER_CONFIGS = [
 // Mutable — set after map loads
 let BOUNDS = { minLng: 17.90, maxLng: 18.15, minLat: 59.27, maxLat: 59.40 };
 let roadLayerIds = [];
+let waterLayerIds = [];
 
 const GAME_SETTINGS = { speedMultiplier: 1, winScore: 100 };
 
@@ -78,6 +79,22 @@ function initRoadLayers() {
   roadLayerIds = map.getStyle().layers
     .filter(l => l.type === 'line' && /road|bridge|tunnel/.test(l.id) && !l.id.includes('case'))
     .map(l => l.id);
+}
+
+function initWaterLayers() {
+  waterLayerIds = map.getStyle().layers
+    .filter(l => l.type === 'fill' && /^water/.test(l.id))
+    .map(l => l.id);
+}
+
+function isInWater(lng, lat) {
+  if (!waterLayerIds.length) return false;
+  try {
+    const pt = map.project([lng, lat]);
+    return map.queryRenderedFeatures([pt.x, pt.y], { layers: waterLayerIds }).length > 0;
+  } catch (_) {
+    return false;
+  }
 }
 
 function _nearestOnSegment(p, a, b) {
@@ -173,6 +190,7 @@ class Racer {
   }
 
   updateAsPlayer(dt, input) {
+    const prevLng = this.lng, prevLat = this.lat;
     const s = this.speedMultiplier * GAME_SETTINGS.speedMultiplier;
     if (input.isDown('ArrowUp')    || input.isDown('w') || input.isDown('W')) this.lat += SPEED_LAT * s * dt;
     if (input.isDown('ArrowDown')  || input.isDown('s') || input.isDown('S')) this.lat -= SPEED_LAT * s * dt;
@@ -180,11 +198,13 @@ class Racer {
     if (input.isDown('ArrowRight') || input.isDown('d') || input.isDown('D')) this.lng += SPEED_LNG * s * dt;
     const snapped = snapToRoad(this.lng, this.lat);
     this.lng = snapped.lng; this.lat = snapped.lat;
+    if (isInWater(this.lng, this.lat)) { this.lng = prevLng; this.lat = prevLat; }
     this._clamp();
   }
 
   updateAsBot(dt, target) {
     if (!target) return;
+    const prevLng = this.lng, prevLat = this.lat;
     const s  = this.speedMultiplier * GAME_SETTINGS.speedMultiplier;
     const dx = target.lng - this.lng, dy = target.lat - this.lat;
     const mag = Math.sqrt(dx * dx + dy * dy);
@@ -194,6 +214,7 @@ class Racer {
     }
     const snapped = snapToRoad(this.lng, this.lat);
     this.lng = snapped.lng; this.lat = snapped.lat;
+    if (isInWater(this.lng, this.lat)) { this.lng = prevLng; this.lat = prevLat; }
     this._clamp();
   }
 
@@ -674,6 +695,7 @@ window.addEventListener('DOMContentLoaded', () => {
     syncCanvasSize();
     initBounds();
     initRoadLayers();
+    initWaterLayers();
     window.addEventListener('resize', () => { syncCanvasSize(); initBounds(); });
     map.on('move', initBounds);
     startGame();
